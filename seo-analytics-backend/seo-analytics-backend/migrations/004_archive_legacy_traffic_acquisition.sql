@@ -1,0 +1,1 @@
+RENAME TABLE traffic_acquisition_data TO traffic_acquisition_data_legacy;
