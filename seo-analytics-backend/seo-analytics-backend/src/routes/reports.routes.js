@@ -5,6 +5,13 @@ import { assertDateRange } from "../utils/dates.js";
 import { HttpError } from "../utils/http-error.js";
 import { getGa4Acquisition, getTrafficAcquisitionReport } from "../services/ga4.service.js";
 import { requestTrafficAcquisitionSync } from "../services/sync.service.js";
+import {
+  addTrackedKeyword,
+  deleteTrackedKeyword,
+  getKeywordHistory,
+  listTrackedKeywords,
+  syncGscKeywordsRange
+} from "../services/gsc-keywords.service.js";
 
 export const reportsRouter = express.Router();
 reportsRouter.use(requireAuth);
@@ -107,6 +114,82 @@ reportsRouter.get("/:websiteId/gsc", requireWebsiteOwnership, async (req, res, n
       [req.website.website_id, startDate, endDate]
     );
     res.json({ websiteId: req.website.website_id, dateRange: { startDate, endDate }, rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportsRouter.get("/:websiteId/gsc/keywords", requireWebsiteOwnership, async (req, res, next) => {
+  try {
+    const keywords = await listTrackedKeywords(req.website.website_id);
+    res.json({ websiteId: req.website.website_id, keywords, count: keywords.length });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportsRouter.post("/:websiteId/gsc/keywords", requireWebsiteOwnership, async (req, res, next) => {
+  try {
+    const keyword = String(req.body?.keyword ?? "").trim();
+    const saved = await addTrackedKeyword(req.website.website_id, keyword);
+    res.status(201).json({ websiteId: req.website.website_id, keyword: saved });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportsRouter.delete("/:websiteId/gsc/keywords/:keywordId", requireWebsiteOwnership, async (req, res, next) => {
+  try {
+    const keywordId = Number(req.params.keywordId);
+    if (!Number.isSafeInteger(keywordId) || keywordId <= 0) {
+      throw new HttpError(400, "Invalid keyword ID.", "INVALID_KEYWORD_ID");
+    }
+    await deleteTrackedKeyword(req.website.website_id, keywordId);
+    res.json({ websiteId: req.website.website_id, keywordId, deleted: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportsRouter.get("/:websiteId/gsc/keywords/:keywordId/history", requireWebsiteOwnership, async (req, res, next) => {
+  try {
+    const keywordId = Number(req.params.keywordId);
+    if (!Number.isSafeInteger(keywordId) || keywordId <= 0) {
+      throw new HttpError(400, "Invalid keyword ID.", "INVALID_KEYWORD_ID");
+    }
+    const { startDate, endDate } = assertDateRange(req.query.startDate, req.query.endDate);
+    const rows = await getKeywordHistory(req.website.website_id, keywordId, startDate, endDate);
+    res.json({
+      websiteId: req.website.website_id,
+      keywordId,
+      dateRange: { startDate, endDate },
+      rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportsRouter.post("/:websiteId/gsc/keywords/:keywordId/history/sync", requireWebsiteOwnership, async (req, res, next) => {
+  try {
+    const keywordId = Number(req.params.keywordId);
+    if (!Number.isSafeInteger(keywordId) || keywordId <= 0) {
+      throw new HttpError(400, "Invalid keyword ID.", "INVALID_KEYWORD_ID");
+    }
+    const { startDate, endDate } = assertDateRange(req.body?.startDate, req.body?.endDate);
+    const result = await syncGscKeywordsRange({
+      userId: req.user.user_id,
+      website: req.website,
+      startDate,
+      endDate,
+      keywordId
+    });
+    res.status(202).json({
+      websiteId: req.website.website_id,
+      keywordId,
+      dateRange: { startDate, endDate },
+      ...result
+    });
   } catch (error) {
     next(error);
   }

@@ -2,6 +2,7 @@ import { pool } from "../db/pool.js";
 import { env } from "../config/env.js";
 import { addDays, assertDateRange, dateInTimezone, subtractMonths } from "../utils/dates.js";
 import { syncGscRange } from "./gsc.service.js";
+import { syncGscKeywordsRange } from "./gsc-keywords.service.js";
 import { syncGa4Summary, syncGa4Acquisition, syncGa4TrafficAcquisition } from "./ga4.service.js";
 import { HttpError } from "../utils/http-error.js";
 
@@ -154,6 +155,12 @@ export async function processSyncJob(job) {
     let result;
     if (job.source === "gsc" && job.report_type === "search_console") {
       result = await syncGscRange({ userId, website, ...chunk });
+      const keywordResult = await syncGscKeywordsRange({ userId, website, ...chunk });
+      result = {
+        rowsFetched: (result.rowsFetched || 0) + (keywordResult.rowsFetched || 0),
+        rowsInserted: (result.rowsInserted || 0) + (keywordResult.rowsInserted || 0),
+        rowsUpdated: (result.rowsUpdated || 0) + (keywordResult.rowsUpdated || 0)
+      };
     } else if (job.source === "ga4" && job.report_type === "website_summary") {
       result = await syncGa4Summary({ userId, website, ...chunk });
     } else if (job.source === "ga4" && job.report_type === "user_acquisition") {
