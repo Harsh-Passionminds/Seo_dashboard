@@ -225,12 +225,12 @@ export async function requestTrafficAcquisitionSync(website, { startDate, endDat
   });
 }
 
-export async function getAuthorizedJob(jobId, userId) {
+export async function getAuthorizedJob(jobId, organizationId) {
   const [rows] = await pool.execute(
     `SELECT j.* FROM sync_jobs j
      JOIN website_credentials w ON w.website_id = j.website_id
-     WHERE j.job_id = ? AND w.owner_user_id = ? LIMIT 1`,
-    [jobId, userId]
+     WHERE j.job_id = ? AND w.organization_id = ? LIMIT 1`,
+    [jobId, organizationId]
   );
   if (!rows.length) throw new HttpError(404, "Sync job not found.", "SYNC_JOB_NOT_FOUND");
   return rows[0];

@@ -19,6 +19,14 @@ const schema = z.object({
   GOOGLE_REDIRECT_URI: z.string().url(),
   SESSION_JWT_SECRET: z.string().min(32),
   TOKEN_ENCRYPTION_KEY_HEX: z.string().regex(/^[a-fA-F0-9]{64}$/),
+  ORGANIZATION_NAME: z.string().trim().min(1).max(255).default("SEO Analytics Organization"),
+  INITIAL_ORG_ADMIN_EMAIL: z.string().trim().email().optional().or(z.literal("")),
+  SMTP_HOST: z.string().trim().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: z.string().default("false"),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  INVITATION_FROM_EMAIL: z.string().trim().email().optional(),
   SYNC_WORKER_ENABLED: z.string().default("true"),
   SYNC_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
   SYNC_FRESHNESS_HOURS: z.coerce.number().positive().default(24),
@@ -37,5 +45,10 @@ if (!parsed.success) {
 export const env = {
   ...parsed.data,
   isProduction: parsed.data.NODE_ENV === "production",
+  smtpConfigured: Boolean(
+    parsed.data.SMTP_HOST && parsed.data.INVITATION_FROM_EMAIL &&
+    parsed.data.SMTP_USER && parsed.data.SMTP_PASSWORD
+  ),
+  smtpSecure: parsed.data.SMTP_SECURE.toLowerCase() === "true",
   syncWorkerEnabled: parsed.data.SYNC_WORKER_ENABLED.toLowerCase() === "true"
 };

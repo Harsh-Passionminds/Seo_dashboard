@@ -377,7 +377,9 @@ export function createGa4Service({
     websiteId,
     startDate,
     endDate,
-    dimensionType
+    dimensionType,
+    dimensionValue,
+    rowLimit
   }) {
     const normalizedUserId = validateId(userId, "userId");
     const normalizedWebsiteId = validateId(websiteId, "websiteId");
@@ -390,17 +392,31 @@ export function createGa4Service({
       );
     }
 
+    if (rowLimit !== undefined && (!Number.isSafeInteger(rowLimit) || rowLimit < 1 || rowLimit > 20001)) {
+      throw new HttpError(400, "rowLimit must be an integer from 1 to 20001.", "INVALID_ROW_LIMIT");
+    }
+    const valueFilter = dimensionValue === undefined ? "" : " AND dimension_value = ?";
+    const limitClause = rowLimit === undefined ? "" : " LIMIT ?";
+    const parameters = [
+      normalizedUserId,
+      normalizedWebsiteId,
+      dimensionType,
+      startDate,
+      endDate,
+      ...(dimensionValue === undefined ? [] : [dimensionValue]),
+      ...(rowLimit === undefined ? [] : [rowLimit])
+    ];
     const [storedRows] = await dbPool.execute(
       `SELECT dimension_type, dimension_value, session_default_channel_group,
               session_source_medium, SUM(sessions) AS sessions,
               SUM(engaged_sessions) AS engaged_sessions
        FROM ga4_traffic_acquisition_data
        WHERE user_id = ? AND website_id = ? AND dimension_type = ?
-         AND report_date BETWEEN ? AND ?
+         AND report_date BETWEEN ? AND ?${valueFilter}
        GROUP BY dimension_type, dimension_value,
                 session_default_channel_group, session_source_medium
-       ORDER BY sessions DESC, dimension_value ASC`,
-      [normalizedUserId, normalizedWebsiteId, dimensionType, startDate, endDate]
+       ORDER BY sessions DESC, dimension_value ASC${limitClause}`,
+      parameters
     );
     const rows = storedRows.map((row) => ({
       dimensionType: row.dimension_type,
@@ -607,19 +623,35 @@ export function createGa4Service({
     startDate,
     endDate,
     reportType,
-    dimensionType = "default_channel_group"
+    dimensionType = "default_channel_group",
+    dimensionValue,
+    rowLimit
   }) {
     const normalizedUserId = validateId(userId, "userId");
     const normalizedWebsiteId = validateId(websiteId, "websiteId");
     validateDateRange(startDate, endDate);
     const config = getAcquisitionConfig(reportType, dimensionType);
+    if (rowLimit !== undefined && (!Number.isSafeInteger(rowLimit) || rowLimit < 1 || rowLimit > 20001)) {
+      throw new HttpError(400, "rowLimit must be an integer from 1 to 20001.", "INVALID_ROW_LIMIT");
+    }
+    const valueFilter = dimensionValue === undefined ? "" : " AND dimension_value = ?";
+    const limitClause = rowLimit === undefined ? "" : " LIMIT ?";
+    const parameters = [
+      normalizedUserId,
+      normalizedWebsiteId,
+      config.dimensionName,
+      startDate,
+      endDate,
+      ...(dimensionValue === undefined ? [] : [dimensionValue]),
+      ...(rowLimit === undefined ? [] : [rowLimit])
+    ];
     const [rows] = await dbPool.execute(
       `SELECT report_date, dimension_name, dimension_value, dimensions_json, metrics_json
        FROM ${config.table}
        WHERE user_id = ? AND website_id = ? AND dimension_name = ?
-         AND report_date BETWEEN ? AND ?
-       ORDER BY report_date ASC, dimension_value ASC`,
-      [normalizedUserId, normalizedWebsiteId, config.dimensionName, startDate, endDate]
+         AND report_date BETWEEN ? AND ?${valueFilter}
+       ORDER BY report_date ASC, dimension_value ASC${limitClause}`,
+      parameters
     );
     return rows.map((row) => ({
       date: String(row.report_date).slice(0, 10),

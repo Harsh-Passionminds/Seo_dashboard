@@ -1,16 +1,14 @@
 import express from "express";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireOrganizationMembership, requirePasswordChange, requireRole } from "../middleware/auth.js";
 import { getAuthorizedJob } from "../services/sync.service.js";
 import { pool } from "../db/pool.js";
 
 export const syncRouter = express.Router();
-syncRouter.use(requireAuth);
+syncRouter.use(requireAuth, requireOrganizationMembership, requirePasswordChange, requireRole("admin"));
 
 // GET /api/sync-jobs — list recent jobs for the signed-in user
 syncRouter.get("/", async (req, res, next) => {
   try {
-    const userId = req.user.user_id;
-
     const [jobs] = await pool.execute(
       `SELECT
          j.job_id,
@@ -30,10 +28,10 @@ syncRouter.get("/", async (req, res, next) => {
        FROM sync_jobs AS j
        INNER JOIN website_credentials AS w
          ON w.website_id = j.website_id
-       WHERE w.owner_user_id = ?
+       WHERE w.organization_id = ?
        ORDER BY j.job_id DESC
        LIMIT 100`,
-      [userId]
+      [req.organization.organization_id]
     );
 
     res.json({ jobs });
@@ -48,7 +46,7 @@ syncRouter.get("/:jobId", async (req, res, next) => {
     if (!Number.isSafeInteger(jobId) || jobId <= 0) {
       return res.status(400).json({ error: { code: "INVALID_JOB_ID", message: "Invalid sync job ID." } });
     }
-    const job = await getAuthorizedJob(jobId, req.user.user_id);
+    const job = await getAuthorizedJob(jobId, req.organization.organization_id);
     res.json({ job });
   } catch (error) {
     next(error);
@@ -58,7 +56,7 @@ syncRouter.get("/:jobId", async (req, res, next) => {
 syncRouter.post("/:jobId/retry", async (req, res, next) => {
   try {
     const jobId = Number(req.params.jobId);
-    const job = await getAuthorizedJob(jobId, req.user.user_id);
+    const job = await getAuthorizedJob(jobId, req.organization.organization_id);
     if (job.status !== "failed") {
       return res.status(409).json({ error: { code: "JOB_NOT_FAILED", message: "Only failed jobs can be retried." } });
     }

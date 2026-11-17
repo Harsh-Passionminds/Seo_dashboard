@@ -1,11 +1,13 @@
 # SEO Analytics Backend
 
-Express + MySQL backend for the SEO Analytics React frontend. It uses real Google OAuth 2.0, GA4 Data API, and Search Console API integrations. No analytics mock data is returned.
+Express + MySQL/MariaDB backend for the SEO Analytics static HTML/CSS/JavaScript frontend. It uses real Google OAuth 2.0, GA4 Data API, and Search Console API integrations. No analytics mock data is returned.
 
 ## What is included
 
-- Google OAuth login, state validation, encrypted token persistence, signed HttpOnly session cookie, logout and `/api/auth/me`.
-- Website CRUD basics and owner-scoped access.
+- Admin Google OAuth login, state validation, encrypted token persistence, signed HttpOnly session cookie, logout and `/api/auth/me`.
+- Admin-managed Analyst and Viewer accounts with bcrypt password hashes, temporary-password change on first login, and website-scoped access.
+- Organization Admin access to all organization websites; employee access is rechecked against current website grants for every request.
+- Admin-only user, integration, website, and synchronization management. Employee exports follow the organization role policy.
 - DB-only date-filtered reports: overview, GSC, GA4 summary, User Acquisition and Traffic Acquisition.
 - Website onboarding with background historical jobs for the prior 16 months (or whatever history Google makes available).
 - Incremental freshness checks at login and when listing websites.
@@ -14,16 +16,16 @@ Express + MySQL backend for the SEO Analytics React frontend. It uses real Googl
 
 ## Important verified limitations / configuration decisions
 
-1. **Database engine:** this migration targets MySQL 8.0+ and InnoDB. Confirm the exact Hostinger engine/version before running it. It is not a claim that your Hostinger plan has been verified.
+1. **Database engine:** the connected development database was verified as MariaDB 10.4.32. Confirm the exact production engine/version and take a backup before applying pending migrations.
 2. **Google properties:** the Google account must have read access to each GA4 property and Search Console property. `gsc_property_url` must be the exact GSC property identifier, e.g. `sc-domain:example.com` is not interchangeable with `https://example.com/`; use the value accepted by the Search Console API for the property.
 3. **History:** the code requests up to 16 months, but APIs can return less history, and GA4 retention/property configuration can limit what is available. “16 months” is the requested window, not a guarantee that Google has every row.
 4. **GA4 fields:** the field sets are explicit in `src/services/ga4.service.js`. GA4 dimension/metric compatibility varies; if a property/API rejects a combination, the job is marked failed with an error summary instead of storing fabricated values.
 5. **GSC granularity:** the current `google_search_console_data` table stores daily site-level totals only, matching the agreed schema. Query/page/country/device breakdowns need extra dimensions and a different unique key/schema.
 6. **Worker hosting:** this implementation uses a polling worker inside the Node process. Hostinger must keep the backend process alive. If the deployment sleeps/restarts or does not support a persistent process, use a supported scheduler/worker arrangement; the code does not claim Hostinger capability has been verified.
-7. **Session model:** this implementation is multi-user and stores `owner_user_id` on websites. Existing database tables must be migrated to match `migrations/001_initial_schema.sql`; do not run this on an existing populated schema without a backup and a migration plan.
+7. **Session model:** this implementation uses a shared server-side-validated session cookie. Employee credentials and website grants are stored separately from Google tokens. Use the existing versioned migrations for an existing database; do not drop or recreate populated tables.
 8. **Security:** access/refresh tokens are encrypted with AES-256-GCM before DB storage. Set a stable 32-byte `TOKEN_ENCRYPTION_KEY_HEX` and `SESSION_JWT_SECRET`. Back up the encryption key securely; losing it makes stored tokens unreadable. Use HTTPS in production.
 9. **OAuth callback:** configure the same `GOOGLE_REDIRECT_URI` in Google Cloud Console. Required scopes are `openid`, `email`, `profile`, Analytics read-only and Search Console read-only. Configure OAuth consent and authorized origins as required by your Google project.
-10. The migration has 8 application tables plus the 2 sync tables? The exact tables are: `users`, `website_credentials`, `google_oauth_tokens`, `google_search_console_data`, `google_analytics_data`, `user_acquisition_data`, `traffic_acquisition_data`, `sync_jobs`, `sync_checkpoints` — nine tables. The user-approved 5 analytics/config tables plus OAuth and 2 sync tables require `users` as the account identity table.
+10. The current schema contains `users`, `website_credentials`, `google_oauth_tokens`, `google_search_console_data`, `google_analytics_data`, `user_acquisition_data`, `ga4_traffic_acquisition_data`, `traffic_acquisition_data_legacy`, `sync_jobs`, `sync_checkpoints`, and `schema_migrations`. `acquisition_report_data` is a superseded unused table and is removed by migration `005_drop_unused_acquisition_report_data.sql`.
 
 ## Setup
 
@@ -35,13 +37,13 @@ Express + MySQL backend for the SEO Analytics React frontend. It uses real Googl
    npm install
    ```
 
-4. Apply the versioned migrations to an **empty database**:
+4. Back up the database and stop the running backend before applying pending authentication/schema migrations:
 
    ```bash
    npm run migrate
    ```
 
-   The migration runner records applied SQL files in `schema_migrations` and skips them on later runs. It refuses to adopt a non-empty database with no migration history. If a database already has the exact schema created by `001_initial_schema.sql` but predates migration tracking, verify it manually before baselining; only then create the migration history table and record the initial schema:
+   The migration runner records applied migrations and skips them on later runs. It refuses to adopt a non-empty database with no migration history. If the existing database predates migration tracking, verify its schema manually before baselining; do not reinitialize a populated database:
 
    ```sql
    CREATE TABLE schema_migrations (
@@ -53,7 +55,9 @@ Express + MySQL backend for the SEO Analytics React frontend. It uses real Googl
    VALUES ('001_initial_schema.sql');
    ```
 
-   After that verified baseline, `npm run migrate` applies the acquisition and consolidated traffic migrations.
+   After that verified baseline, `npm run migrate` applies pending migrations, including `015_employee_password_accounts.js` for employee login.
+
+   Migration `005_drop_unused_acquisition_report_data.sql` permanently drops the obsolete `acquisition_report_data` table. Back up any existing rows from that table first if they are needed. The separate `traffic_acquisition_data_legacy` table is intentionally retained as an archive; it is not queried by the current API.
 
 5. Start the API and worker:
 
@@ -61,16 +65,23 @@ Express + MySQL backend for the SEO Analytics React frontend. It uses real Googl
    npm run dev
    ```
 
-6. Set the frontend's `VITE_API_BASE_URL=http://localhost:4000/api`. The frontend fetch helper should use `credentials: "include"` (the supplied starter frontend already does).
-7. Open the frontend and choose Sign in with Google. The backend callback sets the cookie and redirects to `FRONTEND_URL/`.
+6. The supplied plain frontend currently defaults to `http://localhost:5000/api`, while the backend defaults to port `4000`. Set `window.API_BASE` or `PORT` so they match. Its fetch helper sends `credentials: "include"`.
+7. Open the frontend. Organization Admins choose Google sign-in; Analysts and Viewers use the username and password provisioned by an Admin. A generated temporary password must be changed at first login.
 
 ## API routes
 
+The frontend integration guide, including authentication, filters/comparison behavior, exact request parameters, response shapes, and error handling, is in [FRONTEND_API.md](./FRONTEND_API.md).
+
 - `GET /health`
-- `GET /api/auth/google` — start OAuth
+- `GET /api/auth/google` — start Admin OAuth
 - `GET /api/auth/google/callback` — OAuth callback
+- `POST /api/auth/login` — employee username/password login
+- `POST /api/auth/change-password` — required temporary-password change
 - `GET /api/auth/me` — session status; also schedules freshness checks for the user's websites
 - `POST /api/auth/logout`
+- `POST /api/admin/users` — create Analyst or Viewer account with website grants
+- `POST /api/admin/users/:userId/password` — reset employee password (returns one-time temporary password)
+- `PUT /api/admin/website-access/:userId` — replace employee website grants
 - `GET /api/websites`
 - `POST /api/websites` — body: `{ "websiteName": "...", "domainName": "https://example.com", "ga4PropertyId": "123456789", "gscPropertyUrl": "sc-domain:example.com" }`
 - `GET /api/websites/:id`
@@ -80,7 +91,7 @@ Express + MySQL backend for the SEO Analytics React frontend. It uses real Googl
 - `GET /api/websites/:id/ga4?reportType=summary|user_acquisition&dimensionType=default_channel_group|source_medium&startDate=...&endDate=...`
 - `POST /api/websites/:id/traffic-acquisition/sync` — queue a traffic acquisition refresh; JSON body: `{ "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD" }`
 - `POST /api/websites/:id/sync` — queue missing/recent refresh
-- `GET /api/sync-jobs/:jobId` — only jobs for the signed-in user's websites
+- `/api/sync-jobs` — Admin-only organization synchronization status and retry
 
 All report endpoints read from the database. They do not call Google synchronously during a dashboard request. When a sync is queued, the API returns existing stored data and the job status can be polled.
 
@@ -94,7 +105,7 @@ All report endpoints read from the database. They do not call Google synchronous
 - Historical imports process in configurable chunks; each successful chunk advances the checkpoint.
 - Login/home freshness check uses the last successful sync timestamp and source-specific lookback. A missing checkpoint triggers historical backfill; stale data triggers a bounded recent refresh.
 - Existing data is preserved when Google API calls fail.
-- GA4 User Acquisition remains in its existing table. Traffic Acquisition uses a consolidated table with a dimension type in its unique key, so channel-group and source/medium rows cannot collide. The unused `acquisition_report_data` table is left untouched to avoid deleting unrelated or unverified legacy data.
+- GA4 User Acquisition remains in `user_acquisition_data`. Traffic Acquisition uses `ga4_traffic_acquisition_data`, with a dimension type in its unique key so channel-group and source/medium rows cannot collide. `traffic_acquisition_data_legacy` remains available for rollback/reference; the current API and sync worker do not use it. The obsolete `acquisition_report_data` table is removed by migration 005.
 - GSC CTR and GA4 engagement rate are stored as ratios; multiply by 100 when displaying as percentages.
 - `total_form_conversions` is a generated sum of the two event counts in the daily summary table. Confirm `form_submit` and `From_submit` are distinct actual GA4 event names before relying on both.
 
