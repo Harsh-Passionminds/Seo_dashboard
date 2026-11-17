@@ -14,17 +14,39 @@
     <button class="nav-item" data-view="search-console">⌕ &nbsp; Search Console</button>
     <button class="nav-item" data-view="analytics">◷ &nbsp; Google Analytics</button>
     <button class="nav-item" data-view="acquisition">↗ &nbsp; Acquisition reports</button>
+    <button class="nav-item" data-view="combined">▤ &nbsp; Combined reports</button>
     <button class="nav-item" data-view="keywords">⌕ &nbsp; Keyword tracking</button>
     <button class="nav-item" data-view="websites">◎ &nbsp; Websites</button>
-    <button class="nav-item" data-view="sync">⟳ &nbsp; Sync activity</button>
+    <button class="nav-item hidden" id="sync-nav" data-view="sync">⟳ &nbsp; Sync activity</button>
+    <button class="nav-item hidden" id="admin-nav" data-view="admin">⚙ &nbsp; Administration</button>
   </nav>
   <div class="sidebar-bottom"><i class="connection-dot"></i><div><strong id="connection-label">Checking backend…</strong><small id="connection-sub">API connection</small></div></div>
 </aside>
 <main class="main">
-<header class="topbar"><button class="menu-button" id="menu-button">☰</button><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb-current">Overview</strong></div><div class="top-actions"><span class="status-pill"><i></i> Live API</span><button class="button button-outline" id="google-login">Connect Google</button></div></header>
+<header class="topbar"><button class="menu-button" id="menu-button">☰</button><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb-current">Overview</strong></div><div class="top-actions"><span class="status-pill"><i></i> Live API</span><span class="user-identity hidden" id="user-identity"><strong id="user-name"></strong><small id="user-context"></small></span><button class="button button-outline" id="google-login">Sign in with Google</button><button class="button button-outline hidden" id="logout-button">Log out</button></div></header>
 <section class="page">
+  <div id="auth-gate" class="auth-gate">
+    <div class="panel auth-card">
+      <p class="eyebrow">SECURE WORKSPACE</p>
+      <h1>Sign in to SEO Analytics</h1>
+      <p class="subheading" id="auth-gate-message">Admins sign in with Google. Analysts and Viewers use the username and password provided by their Admin.</p>
+      <form id="employee-login-form" class="admin-form">
+        <label>User ID<input id="employee-username" autocomplete="username" required maxlength="100"></label>
+        <label>Password<input id="employee-password" type="password" autocomplete="current-password" required maxlength="200"></label>
+        <button class="button button-primary" type="submit">Sign in as employee</button>
+      </form>
+      <p class="form-help">Organization Admin?</p>
+      <button class="button button-outline" id="auth-login">Sign in with Google</button>
+      <form id="password-change-form" class="admin-form hidden">
+        <label>New password<input id="new-password" type="password" autocomplete="new-password" required minlength="12" maxlength="72"></label>
+        <label>Confirm new password<input id="confirm-new-password" type="password" autocomplete="new-password" required minlength="12" maxlength="72"></label>
+        <button class="button button-primary" type="submit">Change password and continue</button>
+      </form>
+    </div>
+  </div>
+  <div id="workspace-content" class="hidden">
   <div class="page-heading"><div><p class="eyebrow">SEARCH PERFORMANCE</p><h1 id="page-title">Overview</h1><p class="subheading" id="page-description">Monitor organic visibility, traffic and conversions across your websites.</p></div>
-  <div class="heading-actions"><select id="website-select" aria-label="Choose website"><option value="">Choose website…</option></select><select id="date-preset" aria-label="Date range"><option value="7">Last 7 days</option><option value="28" selected>Last 28 days</option><option value="90">Last 90 days</option><option value="custom">Custom range</option></select><div class="date-control"><label for="start-date">From</label><input id="start-date" type="date"><label for="end-date">To</label><input id="end-date" type="date"></div><label class="compare-toggle"><input id="compare-period" type="checkbox"> Compare previous period</label><button class="button button-primary" id="apply-filters">Apply</button></div></div>
+  <div class="heading-actions"><select id="website-select" aria-label="Choose website"><option value="">Choose website…</option></select><select id="date-preset" aria-label="Date range"><option value="7">Last 7 days</option><option value="28" selected>Last 28 days</option><option value="90">Last 90 days</option><option value="custom">Custom range</option></select><div class="date-control"><label for="start-date">From</label><input id="start-date" type="date"><label for="end-date">To</label><input id="end-date" type="date"></div><label class="compare-toggle"><input id="compare-period" type="checkbox"> Compare periods</label><select id="comparison-mode" class="hidden" aria-label="Comparison mode"><option value="previous_period">Previous period</option><option value="previous_week">Previous week</option><option value="previous_month">Previous month</option><option value="previous_year">Previous year</option><option value="custom">Custom range</option></select><div id="comparison-dates" class="date-control hidden"><label for="compare-start-date">Compare from</label><input id="compare-start-date" type="date"><label for="compare-end-date">To</label><input id="compare-end-date" type="date"></div><button class="button button-primary" id="apply-filters">Apply</button></div></div>
   <div class="notice hidden" id="notice" role="status"></div>
   <section class="view" id="view-overview">
     <div class="metric-grid">
@@ -35,14 +57,22 @@
     </div>
     <div class="content-grid"><article class="panel"><div class="panel-heading"><div><h2>Performance summary</h2><p id="summary-range-label">Selected date range</p></div><span class="tag">API data</span></div><div class="chart-placeholder" id="overview-summary"><div class="empty-state"><span class="empty-icon">⌁</span><strong>Performance data will appear here</strong><p>Connect Google and sync a website to load live metrics.</p></div></div></article>
     <article class="panel"><div class="panel-heading"><div><h2>Quick actions</h2><p>Manage your data sources</p></div></div><div class="quick-list">
-      <button class="quick-action" data-go="websites"><span class="quick-icon">＋</span><span><strong>Add a website</strong><small>Configure GA4 and Search Console properties</small></span><b>→</b></button>
-      <button class="quick-action" data-go="sync"><span class="quick-icon">⟳</span><span><strong>Run a data sync</strong><small>Import history or refresh recent metrics</small></span><b>→</b></button>
+      <button class="quick-action" id="quick-add-website" data-go="websites"><span class="quick-icon">＋</span><span><strong>Add a website</strong><small>Configure GA4 and Search Console properties</small></span><b>→</b></button>
+      <button class="quick-action" id="quick-sync" data-go="sync"><span class="quick-icon">⟳</span><span><strong>Run a data sync</strong><small>Import history or refresh recent metrics</small></span><b>→</b></button>
       <button class="quick-action" data-go="acquisition"><span class="quick-icon">↗</span><span><strong>View acquisition reports</strong><small>Explore first-user and session channels</small></span><b>→</b></button>
     </div></article></div>
   </section>
-  <section class="view hidden" id="view-search-console"><article class="panel"><div class="panel-heading"><div><h2>Search Console metrics</h2><p>Daily clicks, impressions, CTR and average position</p></div><button class="button button-outline export-button" data-export="gsc">Export CSV</button></div><div class="table-wrap"><table><thead id="gsc-thead"><tr><th>Date</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Avg. position</th></tr></thead><tbody id="gsc-table"><tr><td colspan="5" class="empty-cell">Choose a website and apply a date range.</td></tr></tbody></table></div></article></section>
+  <section class="view hidden" id="view-search-console"><article class="panel"><div class="panel-heading"><div><h2>Search Console metrics</h2><p>Daily clicks, impressions, CTR and average position</p></div><div class="inline-actions"><select class="export-format" aria-label="Search Console export format"><option value="csv">CSV</option><option value="xlsx">XLSX</option></select><button class="button button-outline export-button" data-export="gsc">Export</button></div></div><div class="table-wrap"><table><thead id="gsc-thead"><tr><th>Date</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Avg. position</th></tr></thead><tbody id="gsc-table"><tr><td colspan="5" class="empty-cell">Choose a website and apply a date range.</td></tr></tbody></table></div></article></section>
 
-  <section class="view hidden" id="view-analytics"><article class="panel"><div class="panel-heading"><div><h2>Google Analytics 4</h2><p>Organic sessions and form submission events</p></div><button class="button button-outline export-button" data-export="ga4">Export CSV</button></div><div class="table-wrap"><table><thead id="ga4-thead"><tr><th>Date</th><th>Organic sessions</th><th>form_submit</th><th>From_submit</th><th>Total events</th></tr></thead><tbody id="ga4-table"><tr><td colspan="5" class="empty-cell">Choose a website and apply a date range.</td></tr></tbody></table></div></article></section>
+  <section class="view hidden" id="view-analytics"><article class="panel"><div class="panel-heading"><div><h2>Google Analytics 4</h2><p>Organic sessions and form submission events</p></div><div class="inline-actions"><select class="export-format" aria-label="GA4 export format"><option value="csv">CSV</option><option value="xlsx">XLSX</option></select><button class="button button-outline export-button" data-export="ga4">Export</button></div></div><div class="table-wrap"><table><thead id="ga4-thead"><tr><th>Date</th><th>Organic sessions</th><th>form_submit</th><th>From_submit</th><th>Total events</th></tr></thead><tbody id="ga4-table"><tr><td colspan="5" class="empty-cell">Choose a website and apply a date range.</td></tr></tbody></table></div></article></section>
+
+  <section class="view hidden" id="view-combined">
+    <article class="panel">
+      <div class="panel-heading"><div><h2>Combined Search Console and GA4</h2><p>Daily persisted metrics, combined by report date</p></div><div class="inline-actions"><select class="export-format" aria-label="Combined report export format"><option value="csv">CSV</option><option value="xlsx">XLSX</option></select><button class="button button-outline export-button" data-export="combined">Export</button></div></div>
+      <p class="form-help">Visitor Entry and Landing Pages are unavailable because this backend has no persisted data sources for them.</p>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Average position</th><th>Organic sessions</th><th>Form conversions</th></tr></thead><tbody id="combined-table"></tbody></table></div>
+    </article>
+  </section>
   
 <section class="view hidden" id="view-acquisition">
   <article class="panel">
@@ -56,8 +86,9 @@
           <option value="traffic_acquisition">Traffic acquisition (Session)</option>
           <option value="user_acquisition">User acquisition (First user)</option>
         </select>
+        <select class="export-format" aria-label="Acquisition export format"><option value="csv">CSV</option><option value="xlsx">XLSX</option></select>
         <button class="button button-outline export-button"
-                data-export="acquisition">Export CSV</button>
+                data-export="acquisition">Export</button>
       </div>
     </div>
 
@@ -122,7 +153,7 @@
       <article class="panel keyword-history-panel">
         <div class="panel-heading">
           <div><h2>Keyword performance</h2><p>Google Search Console average position, clicks and impressions</p></div>
-          <button class="button button-outline" id="export-keyword-history" type="button">Export CSV</button>
+          <div class="inline-actions"><select id="keyword-export-format" aria-label="Keyword export format"><option value="csv">CSV</option><option value="xlsx">XLSX</option></select><button class="button button-outline" id="export-keyword-history" type="button">Export</button></div>
         </div>
         <div class="keyword-history-toolbar">
           <label>Keyword<select id="keyword-select"><option value="">Select keyword…</option></select></label>
@@ -147,16 +178,86 @@
     </div>
   </section>
 
-  <section class="view hidden" id="view-websites"><div class="section-toolbar"><div><h2>Your websites</h2><p>Each website keeps its reporting data separate.</p></div><button class="button button-primary" id="open-add-website">＋ Add website</button></div><div class="website-grid" id="website-grid"><div class="panel empty-state"><strong>Loading websites…</strong></div></div></section>
+  <section class="view hidden" id="view-websites"><div class="section-toolbar"><div><h2>Your websites</h2><p>Each website keeps its reporting data separate.</p></div><button class="button button-primary hidden" id="open-add-website">＋ Add website</button></div><div class="website-grid" id="website-grid"><div class="panel empty-state"><strong>Loading websites…</strong></div></div></section>
   <section class="view hidden" id="view-sync"><article class="panel"><div class="panel-heading"><div><h2>Sync activity</h2><p>Historical imports and incremental updates</p></div><button class="button button-outline" id="refresh-jobs">Refresh</button></div><div class="table-wrap"><table><thead><tr><th>Job ID</th><th>Website</th><th>Type</th><th>Status</th><th>Progress</th><th>Created</th></tr></thead><tbody id="jobs-table"><tr><td colspan="6" class="empty-cell">No sync jobs loaded yet.</td></tr></tbody></table></div></article></section>
+  <section class="view hidden" id="view-admin">
+    <div class="metric-grid" id="admin-overview"></div>
+    <div class="admin-grid">
+      <article class="panel">
+        <div class="panel-heading"><div><h2>Create employee account</h2><p>Employees sign in with a user ID and password; no Google account is required.</p></div></div>
+        <form id="employee-create-form" class="admin-form">
+          <label>Name<input id="employee-name" required maxlength="255"></label>
+          <label>User ID<input id="employee-create-username" required minlength="3" maxlength="50" pattern="[A-Za-z0-9][A-Za-z0-9._-]*"></label>
+          <label>Role<select id="employee-role"><option value="analyst">Analyst</option><option value="viewer">Viewer</option></select></label>
+          <label>Initial password<input id="employee-create-password" type="password" autocomplete="new-password" minlength="12" maxlength="72" placeholder="Leave blank to generate a temporary password"></label>
+          <fieldset><legend>Assign websites</legend><div id="employee-websites" class="checkbox-list"></div></fieldset>
+          <button class="button button-primary" type="submit">Create account</button>
+        </form>
+      </article>
+      <article class="panel">
+        <div class="panel-heading"><div><h2>Invite Google Admin</h2><p>Only organization administrators use Google sign-in.</p></div></div>
+        <form id="invite-form" class="admin-form">
+          <label>Email<input id="invite-email" type="email" required maxlength="320"></label>
+          <input id="invite-role" type="hidden" value="admin">
+          <button class="button button-outline" type="submit">Send Admin invitation</button>
+        </form>
+      </article>
+      <article class="panel">
+        <div class="panel-heading"><div><h2>Organization settings</h2><p id="organization-label"></p></div></div>
+        <form id="organization-form" class="admin-form">
+          <label>Organization name<input id="organization-name" maxlength="255" required></label>
+          <label>Default timezone<input id="organization-timezone" maxlength="64" required></label>
+          <label>Invitation expiry (hours)<input id="invitation-expiry" type="number" min="1" max="720" required></label>
+          <label class="check-label"><input id="analyst-exports" type="checkbox"> Allow Analyst exports</label>
+          <label class="check-label"><input id="viewer-exports" type="checkbox"> Allow Viewer exports</label>
+          <button class="button button-primary" type="submit">Save settings</button>
+        </form>
+      </article>
+    </div>
+    <article class="panel">
+      <div class="panel-heading"><div><h2>Employees</h2><p>Roles, membership status, and website assignments</p></div><input id="member-search" type="search" placeholder="Search employees"></div>
+      <div class="table-wrap"><table><thead><tr><th>Employee</th><th>User ID / Email</th><th>Role</th><th>Status</th><th>Websites</th><th>Last login</th><th>Actions</th></tr></thead><tbody id="members-table"></tbody></table></div>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><div><h2>Organization websites</h2><p>Backend provides website listing and sync status; no edit or delete Admin endpoint is available.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Website</th><th>Domain</th><th>Owner</th><th>Status</th><th>Active sync jobs</th></tr></thead><tbody id="admin-websites-table"></tbody></table></div>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><div><h2>Website access</h2><p>Grant website visibility to an organization member.</p></div></div>
+      <form id="website-access-form" class="admin-form">
+        <label>Employee<select id="access-member"></select></label>
+        <fieldset><legend>Websites</legend><div id="access-websites" class="checkbox-list"></div></fieldset>
+        <button class="button button-primary" type="submit">Save website access</button>
+      </form>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><div><h2>Invitations</h2><p>Delivery failures are shown explicitly and can be resent.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Delivery</th><th>Expires</th><th>Actions</th></tr></thead><tbody id="invitations-table"></tbody></table></div>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><div><h2>Google integrations</h2><p>Connection state and last successful synchronization; credentials are never displayed.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Website</th><th>Connection owner</th><th>Google account</th><th>Connected</th><th>Last sync</th><th>Error</th></tr></thead><tbody id="integrations-table"></tbody></table></div>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><div><h2>Administrative activity</h2><p>Organization-scoped activity log</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Resource</th><th>Details</th></tr></thead><tbody id="activity-table"></tbody></table></div>
+      <div class="inline-actions"><button class="button button-outline" id="activity-prev" type="button">Previous</button><span id="activity-page"></span><button class="button button-outline" id="activity-next" type="button">Next</button></div>
+    </article>
+  </section>
   <footer class="footer"><span>SEO Analytics</span><span>Metrics are loaded from your backend API. No demo metrics are used.</span></footer>
+  </div>
 </section></main></div>
+<dialog id="temporary-password-dialog" class="modal"><div class="modal-heading"><div><p class="eyebrow">ONE-TIME PASSWORD</p><h2>Save this temporary password</h2></div><button type="button" class="close-button" id="close-temporary-password">×</button></div>
+<p class="form-help">This password is shown only once. Share it with the employee securely. They must change it at first sign-in.</p>
+<label>Temporary password<input id="temporary-password-value" readonly></label>
+<div class="modal-actions"><button type="button" class="button button-outline" id="copy-temporary-password">Copy password</button><button type="button" class="button button-primary" id="done-temporary-password">Done</button></div></dialog>
 <dialog id="website-dialog" class="modal"><form id="website-form"><div class="modal-heading"><div><p class="eyebrow">WEBSITE SETTINGS</p><h2>Add website</h2></div><button type="button" class="close-button" id="close-website-dialog">×</button></div>
 <label>Website name<input name="websiteName" required maxlength="120" placeholder="My website"></label>
 <label>Domain URL<input name="domainName" type="url" required placeholder="https://example.com"></label>
 <label>GA4 property ID<input name="ga4PropertyId" required placeholder="123456789"></label>
 <label>Search Console property URL<input name="gscPropertyUrl" placeholder="https://example.com/ or sc-domain:example.com"></label>
 <p class="form-help">Use a GA4 property ID, not the measurement ID (G-XXXXXXX). The signed-in Google account must have access to these properties.</p><div class="modal-actions"><button type="button" class="button button-outline" id="cancel-website">Cancel</button><button class="button button-primary" type="submit">Save website</button></div></form></dialog>
+<script src="./js/api.js"></script>
 <script src="./js/app.js"></script>
 </body>
 </html>
