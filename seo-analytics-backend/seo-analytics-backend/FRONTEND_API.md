@@ -1,6 +1,76 @@
-# SEO Analytics frontend API guide
+# SEO Analytics frontend developer guide
 
 This is the API contract for the plain JavaScript frontend and other clients integrating with this backend. The backend owns authentication, Google API access, synchronization, and database access. The browser must not call Google APIs directly, handle Google OAuth tokens, or connect to MySQL.
+
+## Start here: frontend integration flow
+
+The fastest safe path to build a frontend against this API is:
+
+1. Configure the API base URL and send cookies on every API request.
+2. On application startup, call `GET /api/auth/me`.
+3. If unauthenticated, show both login choices: Admin Google sign-in and employee username/password sign-in.
+4. If `mustChangePassword` is true, show the password-change screen and do not load workspace data yet.
+5. Once authenticated, use `membership.role` and `permissions` to choose which controls to render. Treat these values as display hints only; the API enforces access server-side.
+6. Load `GET /api/websites`, keep the selected `website_id` in UI state, and pass it to website-scoped requests.
+7. Fetch reports with an inclusive date range. They return persisted SQL data; request a sync separately only when the UI has an Admin action for it.
+
+The API is cookie-authenticated. Do not send a user ID, organization ID, role, or website permission as an authorization claim. Do not store passwords or session data in `localStorage` or `sessionStorage`.
+
+### Application startup and login
+
+```js
+const API_BASE = (window.API_BASE || "http://localhost:4000/api").replace(/\/+$/, "");
+const api = window.ApiClient.createApiClient({
+  baseUrl: API_BASE,
+  onUnauthorized: () => showLogin()
+});
+
+const session = await api.request("/auth/me");
+
+if (!session.authenticated) {
+  showLogin();
+} else if (session.mustChangePassword) {
+  showRequiredPasswordChange();
+} else if (!session.organization || !session.membership) {
+  showAccountContextError();
+} else {
+  showWorkspace(session);
+  const { websites } = await api.request("/websites");
+  renderWebsites(websites);
+}
+```
+
+Employee sign-in is a JSON `POST /api/auth/login` with `{ "username": "...", "password": "..." }`. The response sets an HttpOnly cookie and returns `mustChangePassword`; follow up with `GET /api/auth/me` to load identity, role, permissions, and organization. Admin sign-in must be a browser redirect, not `fetch`:
+
+```js
+window.location.assign(`${API_BASE}/auth/google`);
+```
+
+The OAuth callback redirects the browser back to the configured frontend URL. Analyst and Viewer accounts cannot use Google OAuth.
+
+### Website and report loading
+
+After `/websites` returns, render only those returned sites. For each website-specific API call, use its database `website_id`; never infer that changing an ID in the browser grants access. Example:
+
+```js
+const query = new URLSearchParams({
+  startDate: "2026-11-01",
+  endDate: "2026-11-17"
+});
+const report = await api.request(`/websites/${websiteId}/overview?${query}`);
+```
+
+All dates are calendar dates in `YYYY-MM-DD` form, and both endpoints are inclusive. Report APIs read stored data. A successful response may contain empty arrays when there are no persisted rows.
+
+### Admin employee-management screens
+
+Only an Admin should see the Administration screen. Use `POST /api/admin/users` to create Analyst/Viewer password accounts, including the selected website IDs. If the Admin leaves the password empty, display the returned `data.temporaryPassword` once and provide it to the employee securely. Use `PUT /api/admin/website-access/:userId` to replace assignments, `PATCH` to change role or status, and `POST /api/admin/users/:userId/password` to reset a password. Do not render a Google-account field for employees.
+
+Invitations are a separate Google Admin flow: `POST /api/admin/users/invite` only accepts `role: "admin"` and requires configured SMTP. It is not the employee account-creation endpoint.
+
+### Report export downloads
+
+`GET /api/websites/:websiteId/reports/export` returns a file, not JSON. Use a blob/download helper (or `api.download`) and handle JSON error bodies when the response is not successful. Export permission is checked on every request: Admins can export, Analysts require `reportExportsEnabled`, and Viewers require `viewerExportsEnabled`.
 
 ## 1. Local setup and API base URL
 
@@ -10,7 +80,7 @@ The backend defaults to port `4000` (`PORT` in the backend environment can overr
 http://localhost:4000/api
 ```
 
-Run the backend from `seo-analytics-backend/seo-analytics-backend`:
+Run the backend from the backend project directory:
 
 ```powershell
 npm install
@@ -27,7 +97,7 @@ The supplied frontend reads `window.API_BASE` before loading `js/app.js`. Set it
 <script src="./js/app.js"></script>
 ```
 
-Set backend `FRONTEND_URL` to the frontend origin. CORS allows that origin, plus `http://localhost:5500` and `http://127.0.0.1:5500` for local development.
+Set backend `FRONTEND_URL` to the frontend origin so the OAuth callback returns to the correct app. The React/Vite frontend uses `http://localhost:5173` by default and proxies `/api` to the backend in development; direct browser API calls are also allowed from `FRONTEND_URL` and, outside production, `http://localhost:5173` and `http://127.0.0.1:5173`. Credentialed `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` requests are supported. The plain frontend must be served from an allowed origin rather than opened as a `file://` URL. Cookie-based requests must use `credentials: "include"`; production deployments must use HTTPS and an exact `FRONTEND_URL`.
 
 ## 2. Authentication, ownership, and request conventions
 
@@ -43,40 +113,15 @@ Set backend `FRONTEND_URL` to the frontend origin. CORS allows that origin, plus
 - GSC CTR is a ratio: `0.025` represents `2.5%`. For multiple days, calculate combined CTR as summed clicks divided by summed impressions; do not average daily CTRs.
 - Empty arrays mean no rows are stored for the requested period. Do not generate placeholder metrics or missing date rows.
 
-Recommended request helper:
+The supplied static frontend provides `window.ApiClient.createApiClient` in `js/api.js`. Its `request(path, options)` method includes cookies, parses JSON/text responses, treats `204 No Content` correctly, and reports API failures. Its `download(path, options)` method handles file attachments and filenames. If implementing a different client, preserve those behaviors:
 
 ```js
 const API_BASE = (window.API_BASE || "http://localhost:4000/api").replace(/\/$/, "");
+const api = window.ApiClient.createApiClient({ baseUrl: API_BASE });
 
-async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    credentials: "include",
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers
-    }
-  });
-
-  if (response.status === 204) {
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return null;
-  }
-
-  const contentType = response.headers.get("content-type") || "";
-  const body = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    throw new Error(
-      typeof body === "object"
-        ? body?.error?.message || body?.message || `HTTP ${response.status}`
-        : body || `HTTP ${response.status}`
-    );
-  }
-  return body;
-}
+const session = await api.request("/auth/me");
+const websites = await api.request("/websites");
+await api.download(`/websites/${websiteId}/reports/export?source=gsc&startDate=2026-11-01&endDate=2026-11-17`);
 ```
 
 ## 2.1 Endpoint index
@@ -86,14 +131,14 @@ All paths below are relative to the backend origin except `GET /health`, which i
 | Method | Path | Authentication | Purpose |
 |---|---|---|---|
 | `GET` | `/health` | Public | Backend/database health |
-| `GET` | `/api/auth/google` | Public browser redirect | Start Google OAuth |
+| `GET` | `/api/auth/google` | Public browser redirect | Start Admin Google OAuth |
 | `GET` | `/api/auth/google/callback` | Admin OAuth redirect | Finish Admin OAuth; sets session and redirects |
 | `POST` | `/api/auth/login` | Public, rate-limited | Employee username/password login |
 | `POST` | `/api/auth/change-password` | Signed-in temporary-password account | Change required temporary password |
 | `GET` | `/api/auth/me` | Optional session | Get session and Google connection state |
 | `POST` | `/api/auth/logout` | Optional session | Clear application session |
 | `POST` | `/api/auth/disconnect-google` | Organization Admin | Deactivate the Admin's Google connection and clear session |
-| `POST` | `/api/auth/invitations/accept` | Signed-in Google Admin invitee | Accept an Admin invitation using its token |
+| `POST` | `/api/auth/invitations/accept` | Signed-in Google invitee | Accept an Admin invitation using its token |
 | `GET` | `/api/admin/overview` | Organization Admin | Organization counts and recent activity |
 | `GET` | `/api/admin/users` | Organization Admin | Search, filter, sort, and page through members |
 | `POST` | `/api/admin/users` | Organization Admin | Create Analyst or Viewer account and assign websites |
@@ -135,10 +180,11 @@ All paths below are relative to the backend origin except `GET /health`, which i
 
 - The backend default port is `4000`; `PORT` can override it. The checked-in frontend currently defaults to `http://localhost:5000/api`, so configure `window.API_BASE` or `PORT` to make the ports match. The API prefix is `/api`.
 - Website/report/keyword URLs are scoped by website ID and authorize an Admin or a currently assigned employee after checking active organization membership. Mutating website, keyword, Google integration, and sync operations are Admin-only.
-- Admin responses use `{ "success": true, "message": "...", "data": ... }`; Admin and invitation-acceptance errors use `{ "success": false, "message": "...", "code": "..." }`.
+- Admin success responses use `{ "success": true, "message": "...", "data": ... }`. Most API errors use `{ "error": { "code": "...", "message": "..." } }`; `/api/admin/*` errors and invitation-acceptance errors use `{ "success": false, "message": "...", "code": "..." }`.
 - Send a JSON object for `POST /api/websites`, keyword creation, keyword history sync, and Traffic Acquisition sync.
 - Date-filtered website report and keyword history routes require both `startDate` and `endDate`. They are inclusive, valid calendar dates in `YYYY-MM-DD` form; maximum range is 550 days.
 - Website and keyword IDs must be positive safe integers. Invalid IDs return `400`; unknown or inaccessible websites return `404`.
+- JSON endpoints use the response shapes documented below. File export responses are binary attachments; do not call `response.json()` on a successful export.
 - All API error responses use `{ "error": { "code": "...", "message": "..." } }`.
 
 ## 3. Authentication endpoints
@@ -179,7 +225,7 @@ Begin Admin Google OAuth with `window.location.assign(`${API_BASE}/auth/google`)
 
 ### `POST /api/auth/login`
 
-Employee username/password login. The username is case-insensitive and globally unique. Passwords must be at least 12 characters and no more than 72 UTF-8 bytes. The response sets the HTTP-only session cookie; do not save credentials in browser storage.
+Employee username/password login. The username is case-insensitive and globally unique. Passwords must be at least 12 characters and no more than 72 UTF-8 bytes. Send `Content-Type: application/json`. The response sets the HTTP-only session cookie; do not save credentials in browser storage.
 
 ```json
 { "username": "analyst01", "password": "the employee password" }
@@ -694,7 +740,7 @@ Job status is `queued`, `running`, `completed`, `failed`, or `cancelled`. Record
 
 ## 9. Errors and status handling
 
-Error responses use this shape:
+Most API errors use this shape:
 
 ```json
 {
@@ -705,27 +751,30 @@ Error responses use this shape:
 }
 ```
 
-Additional route-specific codes include `VALIDATION_ERROR` and `WEBSITE_ALREADY_EXISTS` for website creation; `INVALID_REPORT_TYPE` and `INVALID_DIMENSION_TYPE` for GA4 reports; `INVALID_JOB_ID` and `JOB_NOT_FAILED` for sync job operations; and OAuth flow codes such as `OAUTH_DENIED`, `OAUTH_STATE_INVALID`, `OAUTH_ID_TOKEN_MISSING`, and `OAUTH_PROFILE_INVALID`.
+`/api/admin/*` errors and invitation-acceptance errors instead use `{ "success": false, "message": "...", "code": "..." }`. Additional route-specific codes include `INVALID_CREDENTIALS` for employee login; `PASSWORD_CHANGE_REQUIRED` for temporary-password sessions; `GOOGLE_ADMIN_ONLY` for employee Google sign-in; `VALIDATION_ERROR` and `WEBSITE_ALREADY_EXISTS` for website creation; `INVALID_REPORT_TYPE` and `INVALID_DIMENSION_TYPE` for GA4 reports; `INVALID_JOB_ID` and `JOB_NOT_FAILED` for sync job operations; and OAuth flow codes such as `OAUTH_DENIED`, `OAUTH_STATE_INVALID`, `OAUTH_ID_TOKEN_MISSING`, and `OAUTH_PROFILE_INVALID`.
 
 Handle errors by status and `error.code` where possible:
 
 | HTTP | Example codes | Frontend behavior |
 |---|---|---|
 | `400` | `INVALID_DATE`, `INVALID_DATE_RANGE`, `DATE_RANGE_TOO_LARGE`, `INVALID_KEYWORD`, `INVALID_KEYWORD_ID`, `INVALID_JOB_ID`, `INVALID_REPORT_TYPE`, `INVALID_DIMENSION_TYPE`, `VALIDATION_ERROR`, `GSC_PROPERTY_MISSING` | Show validation/configuration message; keep user input. |
-| `401` | `AUTH_REQUIRED`, `GOOGLE_REAUTH_REQUIRED`, `OAUTH_DENIED`, `OAUTH_ID_TOKEN_MISSING` | Ask the user to sign in or reconnect Google; restart a failed OAuth flow. |
-| `403` | `GOOGLE_SCOPES_MISSING` | Ask the user to reconnect and grant required read permissions. |
-| `404` | `WEBSITE_NOT_FOUND`, `KEYWORD_NOT_FOUND`, `SYNC_JOB_NOT_FOUND` | Refresh the relevant list/selection; do not show private data. |
-| `409` | `KEYWORD_ALREADY_EXISTS`, `WEBSITE_ALREADY_EXISTS`, `JOB_NOT_FAILED` | Show the specific conflict; do not retry unchanged input automatically. |
+| `401` | `AUTH_REQUIRED`, `INVALID_CREDENTIALS`, `GOOGLE_REAUTH_REQUIRED`, `OAUTH_DENIED`, `OAUTH_ID_TOKEN_MISSING` | For `AUTH_REQUIRED`, return to sign-in. Keep employee login errors generic. |
+| `403` | `FORBIDDEN`, `GOOGLE_ADMIN_ONLY`, `GOOGLE_SCOPES_MISSING`, `PASSWORD_CHANGE_REQUIRED`, `REPORT_EXPORT_FORBIDDEN` | Hide or disable unavailable actions; force password change when requested; do not retry without permission changes. |
+| `404` | `WEBSITE_NOT_FOUND`, `MEMBER_NOT_FOUND`, `KEYWORD_NOT_FOUND`, `SYNC_JOB_NOT_FOUND` | Refresh the relevant list/selection; do not show private data. |
+| `409` | `KEYWORD_ALREADY_EXISTS`, `WEBSITE_ALREADY_EXISTS`, `USERNAME_ALREADY_EXISTS`, `JOB_NOT_FAILED`, `PASSWORD_CHANGE_NOT_REQUIRED` | Show the specific conflict; do not retry unchanged input automatically. |
+| `429` | Rate limit | Tell the user to wait before retrying. Employee login, comparisons, exports, and sensitive Admin actions are rate-limited. |
+| `413` | `REPORT_TOO_LARGE` | Narrow the date range or filters and retry. |
+| `422` | `VALIDATION_ERROR`, `INVALID_COMPARISON_RANGE`, `REPORT_SOURCE_UNAVAILABLE` | Show field/source-specific guidance and preserve user selections. |
 | `502` | `GSC_REQUEST_FAILED` or Google request failures | Explain the upstream request failed; allow a deliberate retry. |
-| `503` | health database unavailable | Show backend/database unavailable state. |
+| `503` | `EMAIL_NOT_CONFIGURED`, health database unavailable | Show the relevant service/configuration issue; do not imply an email invitation was sent. |
 | `500` | `INTERNAL_SERVER_ERROR` | Show a generic failure; production does not reveal server details. |
 
 `GET /health` is public and returns `{ "status": "ok", "database": "connected" }` when healthy. It returns `503` when the database check fails.
 
 ## 10. Data and security notes
 
-- All Google data must be fetched by backend services using the user's existing OAuth authorization. Never place Google client secrets, refresh/access tokens, encryption keys, session secrets, or DB credentials in frontend files.
-- The backend encrypts OAuth tokens at rest and exposes only connection status through `/auth/me`.
+- Google data is fetched by backend services using the organization's authorized Admin Google connection. Analysts and Viewers read synchronized SQL data and do not need Google credentials. Never place Google client secrets, refresh/access tokens, encryption keys, session secrets, or DB credentials in frontend files.
+- The backend encrypts OAuth tokens at rest. `/api/auth/me` and the Admin integrations endpoint expose connection metadata only, never tokens.
 - The Google account must have read access to each configured GA4 and GSC property. `gsc_property_url` must be the property identifier accepted by Search Console, such as `sc-domain:example.com` or the exact URL-prefix property.
 - Google may return fewer dates/rows than requested due to property data availability, permissions, quotas, or retention. Empty data is not evidence that the keyword has zero performance.
 - GSC position is average position reported by Search Console. It is not a live personalized SERP position.
@@ -737,13 +786,13 @@ All `/api/admin` endpoints are organization-scoped and require a signed-in activ
 
 ### Members
 
-`GET /api/admin/users` supports `search`, `role`, `status`, `page`, `limit` (maximum 100), `sortBy` (`name`, `email`, `role`, `status`, `joined_at`), and `order` (`asc`, `desc`). It returns paginated `data` with user id, name, email, role, status, join date, and assigned website IDs.
+`GET /api/admin/users` supports `search`, `role`, `status`, `page`, `limit` (maximum 100), `sortBy` (`name`, `email`, `role`, `status`, `joined_at`), and `order` (`asc`, `desc`). Its `data` array contains records with `id`, `name`, `email`, `username`, `isEmployeeAccount`, `role`, `status`, `joinedAt`, `lastLoginAt`, and `assignedWebsiteIds`; `pagination` contains `page`, `limit`, and `total`. Employee emails may be `null`. Password hashes are never returned.
 
-Use `PATCH /api/admin/users/:userId/role` with `{ "role": "admin|analyst|viewer" }`, or `PATCH /api/admin/users/:userId/status` with `{ "status": "active|inactive" }`. `DELETE /api/admin/users/:userId` revokes the membership, removes website grants, and invalidates existing sessions.
+Create an employee using `POST /api/admin/users` as described above. Existing employee accounts can switch between `analyst` and `viewer` with `PATCH /api/admin/users/:userId/role` and `{ "role": "analyst" }` or `{ "role": "viewer" }`. Employee password accounts cannot be promoted to Admin, and Google Admin membership cannot be changed into an employee account through this route. Use `PATCH /api/admin/users/:userId/status` with `{ "status": "active" }` or `{ "status": "inactive" }`. `DELETE /api/admin/users/:userId` revokes organization membership, removes website grants, and invalidates existing sessions.
 
 ### Invitations
 
-Create an invitation with:
+Create a Google-authenticated Admin invitation with:
 
 ```http
 POST /api/admin/users/invite
@@ -753,14 +802,14 @@ Content-Type: application/json
 ```json
 {
   "email": "employee@example.com",
-  "role": "analyst",
+  "role": "admin",
   "websiteIds": [12, 14]
 }
 ```
 
-`websiteIds` is optional and defaults to an empty list. SMTP must be configured (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, and `INVITATION_FROM_EMAIL`) or the API responds with `503 EMAIL_NOT_CONFIGURED`. The API stores only a hash of the invitation token. A delivery failure is explicitly returned as `deliveryStatus: "failed"` and the invitation can be resent after SMTP is fixed. List and detail responses never return the raw token.
+`role` must be `admin`; this endpoint does not create Analysts or Viewers. Use `POST /api/admin/users` for those employee accounts. `websiteIds` is optional and defaults to an empty list. SMTP must be configured (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, and `INVITATION_FROM_EMAIL`) or the API responds with `503 EMAIL_NOT_CONFIGURED`. The API stores only a hash of the invitation token. A delivery failure is explicitly returned as `deliveryStatus: "failed"` and the invitation can be resent after SMTP is fixed. List and detail responses never return the raw token.
 
-Invitees must sign in with the invited Google account and send `POST /api/auth/invitations/accept` with `{ "token": "<invitation token>" }`. The token is single-use, expires according to the organization policy, and is checked against the signed-in account's email. A user with an active membership in another organization cannot accept an invitation until the application supports organization selection.
+Invitees must authenticate with the invited Google account and send `POST /api/auth/invitations/accept` with `{ "token": "<invitation token>" }`. The token is single-use, expires according to the organization policy, and is checked against the signed-in account's email. A user with an active membership in another organization cannot accept an invitation because the current session architecture does not provide organization selection.
 
 ### Website access, integrations, settings, and activity
 
@@ -852,7 +901,7 @@ Successful requests return a file attachment with a safe generated filename. CSV
 Export permissions are checked against the database on every request:
 
 - Admin: may export for an authorized website regardless of organization export policy.
-- Analyst: may export when `reportExportsEnabled` is true.
+- Analyst: may export when the organization setting `reportExportsEnabled` is true.
 - Viewer: denied by default; may export only when the Admin enables `viewerExportsEnabled` through `PATCH /api/admin/organization`.
 
 `viewerExportsEnabled` is stored in migration `014_viewer_report_exports.js` and defaults to false. Apply pending migrations with `npm run migrate`; rollback this migration with `npm run migrate -- rollback 014_viewer_report_exports.js`. Rollback is guarded and refuses to remove the setting while any organization has Viewer exports enabled. Successful file generation writes only the organization, actor, website, source, format, selected date range, metrics, and dimensions to `activity_logs`; report contents and credentials are not logged. Temporary files are cleaned after the response or generation failure.

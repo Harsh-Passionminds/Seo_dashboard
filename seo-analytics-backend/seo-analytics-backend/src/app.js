@@ -9,6 +9,7 @@ import { reportsRouter } from "./routes/reports.routes.js";
 import { syncRouter } from "./routes/sync.routes.js";
 import { adminRouter } from "./routes/admin.routes.js";
 import { dbHealthCheck } from "./db/pool.js";
+import { HttpError } from "./utils/http-error.js";
 
 export const app = express();
 
@@ -20,13 +21,6 @@ app.set("trust proxy", env.isProduction ? 1 : false);
 //   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
 //   allowedHeaders: ["Content-Type", "Authorization"]
 // }));
-
-
-const allowedOrigins = new Set([
-  new URL(env.FRONTEND_URL).origin,
-  "http://localhost:5500",
-  "http://127.0.0.1:5500"
-]);
 
 
 // app.use(cors({
@@ -41,7 +35,15 @@ const allowedOrigins = new Set([
 //   exposedHeaders: ["Content-Disposition"]
 // }));
 app.use(cors({
-  origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)),
+  origin(origin, callback) {
+    const allowedOrigins = new Set([new URL(env.FRONTEND_URL).origin]);
+    if (!env.isProduction) {
+      allowedOrigins.add("http://localhost:5173");
+      allowedOrigins.add("http://127.0.0.1:5173");
+    }
+    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    return callback(new HttpError(403, `CORS blocked origin: ${origin}`, "CORS_ORIGIN_DENIED"));
+  },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   exposedHeaders: ["Content-Disposition"],

@@ -10,7 +10,7 @@ Express + MySQL/MariaDB backend for the SEO Analytics static HTML/CSS/JavaScript
 - Admin-only user, integration, website, and synchronization management. Employee exports follow the organization role policy.
 - DB-only date-filtered reports: overview, GSC, GA4 summary, User Acquisition and Traffic Acquisition.
 - Website onboarding with background historical jobs for the prior 16 months (or whatever history Google makes available).
-- Incremental freshness checks at login and when listing websites.
+- Admin OAuth login and session checks schedule background freshness checks; employee report requests read stored data and do not call Google.
 - DB-backed `sync_jobs` and `sync_checkpoints`, retry-safe upserts, 30-day chunks, and a polling worker.
 - Initial MySQL migration and date-range tests.
 
@@ -25,11 +25,11 @@ Express + MySQL/MariaDB backend for the SEO Analytics static HTML/CSS/JavaScript
 7. **Session model:** this implementation uses a shared server-side-validated session cookie. Employee credentials and website grants are stored separately from Google tokens. Use the existing versioned migrations for an existing database; do not drop or recreate populated tables.
 8. **Security:** access/refresh tokens are encrypted with AES-256-GCM before DB storage. Set a stable 32-byte `TOKEN_ENCRYPTION_KEY_HEX` and `SESSION_JWT_SECRET`. Back up the encryption key securely; losing it makes stored tokens unreadable. Use HTTPS in production.
 9. **OAuth callback:** configure the same `GOOGLE_REDIRECT_URI` in Google Cloud Console. Required scopes are `openid`, `email`, `profile`, Analytics read-only and Search Console read-only. Configure OAuth consent and authorized origins as required by your Google project.
-10. The current schema contains `users`, `website_credentials`, `google_oauth_tokens`, `google_search_console_data`, `google_analytics_data`, `user_acquisition_data`, `ga4_traffic_acquisition_data`, `traffic_acquisition_data_legacy`, `sync_jobs`, `sync_checkpoints`, and `schema_migrations`. `acquisition_report_data` is a superseded unused table and is removed by migration `005_drop_unused_acquisition_report_data.sql`.
+10. The current schema includes organization access (`organizations`, `organization_members`, `website_permissions`, `employee_credentials`, invitations, and activity logs), Google identity/token tables, website credentials, persisted GSC/GA4/acquisition analytics, and sync job/checkpoint tables. `acquisition_report_data` is a superseded unused table and is removed by migration `005_drop_unused_acquisition_report_data.sql`.
 
 ## Setup
 
-1. Confirm the Hostinger database engine/version and create an empty database plus a least-privilege DB user.
+1. Confirm the target database engine/version and use a least-privilege DB user. For an existing populated database, verify its migration history and take a backup; do not replace it with an empty database or run the initial schema over existing records.
 2. Copy `.env.example` to `.env` and fill every secret/config value. Never commit `.env`.
 3. Install Node.js 20+ and dependencies:
 
@@ -65,19 +65,19 @@ Express + MySQL/MariaDB backend for the SEO Analytics static HTML/CSS/JavaScript
    npm run dev
    ```
 
-6. The supplied plain frontend currently defaults to `http://localhost:5000/api`, while the backend defaults to port `4000`. Set `window.API_BASE` or `PORT` so they match. Its fetch helper sends `credentials: "include"`.
+6. The supplied plain frontend currently defaults to `http://localhost:5000/api`, while the backend defaults to port `4000`. Set `window.API_BASE` or `PORT` so they match. The React/Vite frontend defaults to `http://localhost:5173` and proxies `/api` requests to port `4000`; set the backend `FRONTEND_URL` to the frontend origin so Google OAuth returns to the correct app. CORS allows `FRONTEND_URL` plus the Vite localhost origins in development, including credentialed `PATCH` requests. See [FRONTEND_API.md](./FRONTEND_API.md) for deployment details.
 7. Open the frontend. Organization Admins choose Google sign-in; Analysts and Viewers use the username and password provisioned by an Admin. A generated temporary password must be changed at first login.
 
 ## API routes
 
-The frontend integration guide, including authentication, filters/comparison behavior, exact request parameters, response shapes, and error handling, is in [FRONTEND_API.md](./FRONTEND_API.md).
+The frontend developer guide, including startup/login flow, role-aware UI guidance, routes, request parameters, response shapes, exports, and errors, is in [FRONTEND_API.md](./FRONTEND_API.md).
 
 - `GET /health`
 - `GET /api/auth/google` — start Admin OAuth
 - `GET /api/auth/google/callback` — OAuth callback
 - `POST /api/auth/login` — employee username/password login
 - `POST /api/auth/change-password` — required temporary-password change
-- `GET /api/auth/me` — session status; also schedules freshness checks for the user's websites
+- `GET /api/auth/me` — session status; schedules freshness checks for an authenticated Admin
 - `POST /api/auth/logout`
 - `POST /api/admin/users` — create Analyst or Viewer account with website grants
 - `POST /api/admin/users/:userId/password` — reset employee password (returns one-time temporary password)
