@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { exportReport, getReportComparison, getKeywords } from "../../services/endpoints";
+import { exportReport, getReportComparison, getKeywordReport, getKeywords } from "../../services/endpoints";
 import { useWebsite, useDateRange } from "../../hooks/useAppContext";
 import { useSession } from "../../hooks/useSession";
 import { toNum } from "../../utils/format";
@@ -12,7 +12,7 @@ const SOURCES = [
   ["user_acquisition", "User Acquisition"],
   ["traffic_acquisition", "Traffic Acquisition"],
   ["keyword_tracking", "Keyword Tracking"],
-  ["combined", "Combined (GSC + GA4)"],
+  ["combined", "Combined (GSC + GA4 + Keyword Tracking)"],
 ];
 const MODES = [
   ["previous_period", "Previous period"],
@@ -30,6 +30,171 @@ const fmt = (k, v) => {
   return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(2);
 };
 const cell = (v) => (v && typeof v === "object" ? JSON.stringify(v) : v ?? "No data");
+const KEYWORD_LIMIT = 25;
+
+function aggregateKeywordSeries(rows = []) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const date = row.date ?? row.report_date;
+    if (!date) continue;
+    const entry = grouped.get(date) ?? { date, clicks: 0, impressions: 0, positionTotal: 0, positionWeight: 0 };
+    const clicks = toNum(row.clicks);
+    const impressions = toNum(row.impressions);
+    const position = toNum(row.average_position);
+    if (clicks !== null) entry.clicks += clicks;
+    if (impressions !== null) entry.impressions += impressions;
+    if (position !== null && impressions !== null && impressions > 0) {
+      entry.positionTotal += position * impressions;
+      entry.positionWeight += impressions;
+    }
+    grouped.set(date, entry);
+  }
+  return [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date)).map((row) => ({
+    date: row.date,
+    clicks: row.clicks,
+    impressions: row.impressions,
+    ctr: row.impressions ? row.clicks / row.impressions : null,
+    average_position: row.positionWeight ? row.positionTotal / row.positionWeight : null
+  }));
+}
+
+function CombinedSection({ title, source, result, keywordRows, pagination, page, onPageChange }) {
+  const [chartMetric, setChartMetric] = useState("");
+  const [view, setView] = useState("current");
+  if (!result) return null;
+
+  const summary = result.summary ?? {};
+  const currentRows = result.data?.current ?? [];
+  const comparisonRows = result.data?.comparison ?? [];
+  const currentSeries = source === "keyword_tracking"
+    ? aggregateKeywordSeries(currentRows)
+    : result.data?.currentSeries ?? currentRows;
+  const comparisonSeries = source === "keyword_tracking"
+    ? aggregateKeywordSeries(comparisonRows)
+    : result.data?.comparisonSeries ?? comparisonRows;
+  const graphSource = source === "keyword_tracking" ? "gsc" : source;
+  const metrics = Object.keys(summary)
+    .filter((key) => [...currentSeries, ...comparisonSeries].some((row) => Object.hasOwn(row, key)))
+    .map((key) => ({ key, label: key }));
+  const selectedMetric = metrics.some(({ key }) => key === chartMetric) ? chartMetric : metrics[0]?.key ?? "";
+  const rows = view === "current" ? currentRows : comparisonRows;
+
+  return (
+    <section className="space-y-4 rounded-lg border bg-white p-4">
+      <div>
+        <h3 className="text-lg font-medium">{title}</h3>
+        <p className="text-xs text-gray-500">
+          {result.periods?.current?.startDate} → {result.periods?.current?.endDate} compared with{" "}
+          {result.periods?.comparison?.startDate} → {result.periods?.comparison?.endDate}
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {Object.entries(summary).map(([key, item]) => (
+          <div key={key} className="rounded-lg border p-3">
+            <div className="text-xs text-gray-500">{key.replaceAll("_", " ")}</div>
+            <div className="mt-1 text-lg font-semibold">{fmt(key, item.currentValue)}</div>
+            <div className="text-xs text-gray-500">
+              Previous: {fmt(key, item.previousValue)}
+              {item.percentageChange == null ? "" : ` · ${item.percentageChange > 0 ? "+" : ""}${item.percentageChange.toFixed(1)}%`}
+            </div>
+          </div>
+        ))}
+        {source === "keyword_tracking" && (
+          <div className="rounded-lg border p-3">
+            <div className="text-xs text-gray-500">Tracked keywords</div>
+            <div className="mt-1 text-lg font-semibold">{pagination?.total?.toLocaleString() ?? "—"}</div>
+            <div className="text-xs text-gray-500">Unique keywords for this website</div>
+          </div>
+        )}
+      </div>
+
+      {metrics.length > 0 && selectedMetric && (
+        <ComparisonGraph
+          currentRows={currentSeries}
+          comparisonRows={comparisonSeries}
+          currentPeriod={result.periods?.current}
+          comparisonPeriod={result.periods?.comparison}
+          source={graphSource}
+          metrics={metrics}
+          metric={selectedMetric}
+          onMetricChange={setChartMetric}
+          currentLabel="Current"
+          comparisonLabel="Comparison"
+        />
+      )}
+
+      {source !== "keyword_tracking" && (
+        <>
+          <div className="flex gap-1">
+            {[["current", "Current period"], ["comparison", "Comparison period"]].map(([value, label]) => (
+              <button key={value} onClick={() => setView(value)}
+                className={`rounded-full border px-3 py-1 text-sm ${view === value ? "bg-blue-50 text-blue-700" : "bg-white"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {!rows.length ? (
+            <p className="rounded border p-4 text-sm text-gray-600">No stored rows for this period.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[700px] rounded-lg border text-sm">
+                <thead className="bg-gray-50 text-left"><tr>
+                  {Object.keys(rows[0]).map((key) => <th key={key} className="p-2">{key}</th>)}
+                </tr></thead>
+                <tbody>{rows.slice(0, 100).map((row, index) => (
+                  <tr key={index} className="border-t">
+                    {Object.values(row).map((value, cellIndex) => (
+                      <td key={cellIndex} className="p-2">{cell(value)}</td>
+                    ))}
+                  </tr>
+                ))}</tbody>
+              </table>
+              {rows.length > 100 && <p className="mt-2 text-xs text-gray-500">Showing the first 100 of {rows.length} rows.</p>}
+            </div>
+          )}
+        </>
+      )}
+
+      {source === "keyword_tracking" && (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] rounded-lg border text-sm">
+              <thead className="bg-gray-50 text-left"><tr>
+                {["Keyword", "Latest position", "Previous position", "Position change", "Clicks", "Impressions", "CTR", "Last updated", "Status"]
+                  .map((label) => <th key={label} className="p-2">{label}</th>)}
+              </tr></thead>
+              <tbody>
+                {(keywordRows ?? []).map((row) => (
+                  <tr key={row.keywordId} className="border-t">
+                    <td className="p-2">{row.keyword}</td>
+                    <td className="p-2">{fmt("average_position", row.averagePosition)}</td>
+                    <td className="p-2">{fmt("average_position", row.previousAveragePosition)}</td>
+                    <td className="p-2">{fmt("positionChange", row.positionChange)}</td>
+                    <td className="p-2">{fmt("clicks", row.clicks)}</td>
+                    <td className="p-2">{fmt("impressions", row.impressions)}</td>
+                    <td className="p-2">{fmt("ctr", row.ctr)}</td>
+                    <td className="p-2">{row.lastUpdated ?? "No data"}</td>
+                    <td className="p-2">{row.trackingStatus}</td>
+                  </tr>
+                ))}
+                {!keywordRows?.length && <tr><td colSpan="9" className="p-4 text-gray-500">No tracked keywords for this website.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {pagination && pagination.totalPages > 1 && (
+            <div className="flex items-center gap-3 text-sm">
+              <button disabled={page <= 1} onClick={() => onPageChange(page - 1)}
+                className="rounded border px-3 py-1 disabled:opacity-50">Previous</button>
+              <span>Page {pagination.page} of {pagination.totalPages} · {pagination.total.toLocaleString()} keywords</span>
+              <button disabled={page >= pagination.totalPages} onClick={() => onPageChange(page + 1)}
+                className="rounded border px-3 py-1 disabled:opacity-50">Next</button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
 
 export default function ReportsPage() {
   const { websiteId } = useWebsite();
@@ -47,6 +212,7 @@ export default function ReportsPage() {
   const [err, setErr] = useState("");
   const [exporting, setExporting] = useState("");
   const [generatedFor, setGeneratedFor] = useState(null);
+  const [keywordPage, setKeywordPage] = useState(1);
   const reportContextKey = JSON.stringify({
     websiteId,
     source,
@@ -67,6 +233,13 @@ export default function ReportsPage() {
     enabled: !!websiteId && source === "keyword_tracking",
   });
   const kwList = kw.data?.keywords ?? [];
+  const combinedKeywords = useQuery({
+    queryKey: ["combined-keywords", websiteId, range, keywordPage],
+    queryFn: () => getKeywordReport(websiteId, {
+      ...range, sort: "keyword", order: "asc", page: keywordPage, limit: KEYWORD_LIMIT
+    }),
+    enabled: !!websiteId && source === "combined"
+  });
 
   const filters = () => {
     const f = {};
@@ -76,10 +249,25 @@ export default function ReportsPage() {
   };
 
   const gen = useMutation({
-    mutationFn: ({ requestWebsiteId, params }) => getReportComparison(requestWebsiteId, params),
+    mutationFn: async ({ requestWebsiteId, params }) => {
+      if (params.source !== "combined") return getReportComparison(requestWebsiteId, params);
+      const common = params;
+      const [gsc, ga4, keywordTracking] = await Promise.all(
+        ["gsc", "ga4", "keyword_tracking"].map((reportSource) =>
+          getReportComparison(requestWebsiteId, { ...common, source: reportSource })
+        )
+      );
+      return {
+        source: "combined",
+        sections: { gsc, ga4, keyword_tracking: keywordTracking },
+        periods: gsc.periods,
+        metadata: gsc.metadata
+      };
+    },
     onSuccess: (res, variables) => {
       setGeneratedFor(variables.contextKey);
       if (variables.contextKey !== currentContext.current) return;
+      if (variables.params.source === "combined") return;
       const keys = Object.keys(res.summary ?? {});
       if (!picked.length) setPicked(keys);
       if (!chartMetric || !keys.includes(chartMetric)) setChartMetric(keys[0] ?? "");
@@ -93,20 +281,26 @@ export default function ReportsPage() {
     const params = { source, currentStartDate: range.startDate, currentEndDate: range.endDate };
     if (mode === "custom") { params.compareStartDate = cmp.startDate; params.compareEndDate = cmp.endDate; }
     else params.comparisonMode = mode;
-    if (picked.length) params.metrics = picked.join(",");
+    if (picked.length && source !== "combined") params.metrics = picked.join(",");
     const f = filters();
     if (f) params.filters = f;
     gen.mutate({ requestWebsiteId: websiteId, params, contextKey: reportContextKey });
   };
 
-  const changeSource = (s) => { setSource(s); setPicked([]); setChartMetric(""); gen.reset(); };
+  const changeSource = (s) => {
+    setSource(s);
+    setPicked([]);
+    setChartMetric("");
+    setKeywordPage(1);
+    gen.reset();
+  };
 
   const exportFile = async (format) => {
     setExporting(format);
     setErr("");
     try {
       const p = { source, startDate: range.startDate, endDate: range.endDate, format };
-      if (picked.length) p.metrics = picked.join(",");
+      if (picked.length && source !== "combined") p.metrics = picked.join(",");
       const f = filters();
       if (f) p.filters = f;
       await exportReport(websiteId, p);
@@ -216,7 +410,28 @@ export default function ReportsPage() {
         {!permissions.canExportReports && <p className="mt-2 text-xs text-gray-500">Exports are not enabled for your account.</p>}
       </section>
 
-      {res && (
+      {res && source === "combined" && (
+        <>
+          <CombinedSection title="Google Search Console" source="gsc" result={res.sections.gsc} />
+          <CombinedSection title="Google Analytics 4" source="ga4" result={res.sections.ga4} />
+          {combinedKeywords.error && <p className="rounded border bg-white p-4 text-sm text-red-700">{combinedKeywords.error.message}</p>}
+          {combinedKeywords.isLoading ? (
+            <p className="rounded border bg-white p-4 text-sm text-gray-600">Loading unified keyword results…</p>
+          ) : (
+            <CombinedSection
+              title="Unified Keyword Tracking"
+              source="keyword_tracking"
+              result={res.sections.keyword_tracking}
+              keywordRows={combinedKeywords.data?.rows ?? []}
+              pagination={combinedKeywords.data?.pagination}
+              page={keywordPage}
+              onPageChange={setKeywordPage}
+            />
+          )}
+        </>
+      )}
+
+      {res && source !== "combined" && (
         <>
           <section>
             <p className="mb-2 text-sm text-gray-500">

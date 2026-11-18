@@ -157,7 +157,21 @@ export function createReportDataService({
     });
   }
 
-  return { getSourceRows, getSourceSeries };
+  async function getUnifiedKeywordRows({ websiteId, startDate, endDate }) {
+    const result = await repository.getUnifiedKeywordReport({
+      websiteId,
+      startDate,
+      endDate,
+      search: "",
+      sort: "keyword",
+      order: "asc",
+      limit: MAX_REPORT_ROWS + 1,
+      offset: 0
+    });
+    return assertBounded(result.rows);
+  }
+
+  return { getSourceRows, getSourceSeries, getUnifiedKeywordRows };
 }
 
 export const reportDataService = createReportDataService();

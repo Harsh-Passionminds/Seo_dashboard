@@ -30,14 +30,19 @@ const METRIC_HEADERS = {
   activeUsers: "Active users",
   averageSessionDuration: "Average session duration",
   conversions: "Conversions",
-  totalRevenue: "Total revenue"
+  totalRevenue: "Total revenue",
+  previousAveragePosition: "Previous average position",
+  positionChange: "Position change"
 };
 const DIMENSION_HEADERS = {
+  section: "Section",
   date: "Date",
   dimensionValue: "Dimension value",
   dimensionType: "Dimension type",
   keywordId: "Keyword ID",
-  keyword: "Keyword"
+  keyword: "Keyword",
+  lastUpdated: "Last updated",
+  trackingStatus: "Tracking status"
 };
 const NUMBER_FORMATS = new Map([
   ["ctr", "0.00%"],
@@ -60,6 +65,9 @@ function dimensionValue(row, dimension) {
   if (dimension === "dimensionType") return row.dimensionType ?? null;
   if (dimension === "keywordId") return row.keyword_id ?? null;
   if (dimension === "keyword") return row.keyword ?? null;
+  if (dimension === "section") return row.section ?? null;
+  if (dimension === "lastUpdated") return row.lastUpdated ?? row.last_observation_date ?? null;
+  if (dimension === "trackingStatus") return row.trackingStatus ?? row.tracking_status ?? null;
   return null;
 }
 
@@ -134,6 +142,7 @@ async function writeXlsx(filePath, {
   websiteName,
   startDate,
   endDate,
+  worksheets,
   signal
 }) {
   const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
@@ -144,36 +153,39 @@ async function writeXlsx(filePath, {
   workbook.creator = "SEO Analytics";
   workbook.created = new Date();
   workbook.modified = new Date();
-  const worksheet = workbook.addWorksheet("Report");
-  worksheet.columns = columns.map(({ key }) => ({ key, width: 22 }));
-  worksheet.addRow([`${source.toUpperCase()} report`]).commit();
-  worksheet.addRow([`Website: ${websiteName}`]).commit();
-  worksheet.addRow([`Reporting period: ${startDate} to ${endDate}`]).commit();
-  const headerRow = worksheet.addRow(columns.map((column) => column.header));
-  headerRow.eachCell((cell) => {
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF244062" } };
-  });
-  headerRow.commit();
-
-  for (let index = 0; index < rows.length; index += 1) {
-    if (index % 500 === 0) checkDisconnected(signal);
-    const row = rows[index];
-    const output = columns.map(({ key }) =>
-      key in DIMENSION_HEADERS
-        ? formatCellValue(dimensionValue(row, key), key)
-        : formatCellValue(metricValue(row, key), key)
-    );
-    const excelRow = worksheet.addRow(output);
-    columns.forEach((column, columnIndex) => {
-      const cell = excelRow.getCell(columnIndex + 1);
-      if (column.key === "date") cell.numFmt = "yyyy-mm-dd";
-      else if (NUMBER_FORMATS.has(column.key)) cell.numFmt = NUMBER_FORMATS.get(column.key);
+  const sheets = worksheets ?? [{ name: "Report", source, rows, columns }];
+  for (const sheet of sheets) {
+    const worksheet = workbook.addWorksheet(sheet.name);
+    worksheet.columns = sheet.columns.map(({ key }) => ({ key, width: 22 }));
+    worksheet.addRow([`${sheet.source.toUpperCase()} report`]).commit();
+    worksheet.addRow([`Website: ${websiteName}`]).commit();
+    worksheet.addRow([`Reporting period: ${startDate} to ${endDate}`]).commit();
+    const headerRow = worksheet.addRow(sheet.columns.map((column) => column.header));
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF244062" } };
     });
-    excelRow.commit();
+    headerRow.commit();
+
+    for (let index = 0; index < sheet.rows.length; index += 1) {
+      if (index % 500 === 0) checkDisconnected(signal);
+      const row = sheet.rows[index];
+      const output = sheet.columns.map(({ key }) =>
+        key in DIMENSION_HEADERS
+          ? formatCellValue(dimensionValue(row, key), key)
+          : formatCellValue(metricValue(row, key), key)
+      );
+      const excelRow = worksheet.addRow(output);
+      sheet.columns.forEach((column, columnIndex) => {
+        const cell = excelRow.getCell(columnIndex + 1);
+        if (column.key === "date" || column.key === "lastUpdated") cell.numFmt = "yyyy-mm-dd";
+        else if (NUMBER_FORMATS.has(column.key)) cell.numFmt = NUMBER_FORMATS.get(column.key);
+      });
+      excelRow.commit();
+    }
+    worksheet.commit();
   }
 
-  worksheet.commit();
   await workbook.commit();
 }
 
@@ -231,18 +243,83 @@ export function createReportExportService({
     let filePath;
     try {
       checkDisconnected(signal);
-      const rows = await dataService.getSourceRows({
-        source,
-        userId,
-        website,
-        startDate,
-        endDate,
-        filters,
-        sortBy,
-        order
-      });
+      let rows;
+      let worksheets;
+      let columns = getColumns({ metrics, dimensions });
+      if (source === "combined") {
+        const [gscRows, ga4Rows, keywordRows] = await Promise.all([
+          dataService.getSourceRows({ source: "gsc", userId, website, startDate, endDate, filters: {}, sortBy: "date", order: "asc" }),
+          dataService.getSourceRows({ source: "ga4", userId, website, startDate, endDate, filters: {}, sortBy: "date", order: "asc" }),
+          dataService.getUnifiedKeywordRows({ websiteId: website.website_id, startDate, endDate })
+        ]);
+        const keywordReportRows = keywordRows.map((row) => ({
+          ...row,
+          keywordId: Number(row.keyword_id),
+          lastUpdated: row.last_observation_date
+            ? String(row.last_observation_date).slice(0, 10)
+            : null,
+          trackingStatus: row.tracking_status,
+          previousAveragePosition: row.previous_average_position === null
+            ? null
+            : Number(row.previous_average_position),
+          positionChange: row.average_position === null || row.previous_average_position === null
+            ? null
+            : Number(row.average_position) - Number(row.previous_average_position)
+        }));
+        const sheetColumns = {
+          gsc: getColumns({ dimensions: ["date"], metrics: ["clicks", "impressions", "ctr", "average_position"] }),
+          ga4: getColumns({
+            dimensions: ["date"],
+            metrics: ["organic_sessions", "form_submit_conversions", "from_submit_conversions", "total_form_conversions"]
+          }),
+          keyword_tracking: getColumns({
+            dimensions: ["keywordId", "keyword", "lastUpdated", "trackingStatus"],
+            metrics: ["clicks", "impressions", "ctr", "average_position", "previousAveragePosition", "positionChange"]
+          })
+        };
+        worksheets = [
+          { name: "GSC", source: "gsc", rows: gscRows, columns: sheetColumns.gsc },
+          { name: "GA4", source: "ga4", rows: ga4Rows, columns: sheetColumns.ga4 },
+          { name: "Keywords", source: "keyword_tracking", rows: keywordReportRows, columns: sheetColumns.keyword_tracking }
+        ];
+        rows = [...gscRows, ...ga4Rows, ...keywordReportRows];
+        if (format === "csv") {
+          const combinedColumns = [
+            { key: "section", header: "Section" },
+            { key: "date", header: "Date" },
+            { key: "keywordId", header: "Keyword ID" },
+            { key: "keyword", header: "Keyword" },
+            { key: "lastUpdated", header: "Last updated" },
+            { key: "trackingStatus", header: "Tracking status" },
+            ...getColumns({
+              dimensions: [],
+              metrics: [
+                "clicks", "impressions", "ctr", "average_position",
+                "previousAveragePosition", "positionChange", "organic_sessions",
+                "form_submit_conversions", "from_submit_conversions", "total_form_conversions"
+              ]
+            })
+          ];
+          rows = [
+            ...gscRows.map((row) => ({ ...row, section: "GSC" })),
+            ...ga4Rows.map((row) => ({ ...row, section: "GA4" })),
+            ...keywordReportRows.map((row) => ({ ...row, section: "Keyword Tracking" }))
+          ];
+          columns = combinedColumns;
+        }
+      } else {
+        rows = await dataService.getSourceRows({
+          source,
+          userId,
+          website,
+          startDate,
+          endDate,
+          filters,
+          sortBy,
+          order
+        });
+      }
       checkDisconnected(signal);
-      const columns = getColumns({ metrics, dimensions });
       directory = await mkdtemp(path.join(os.tmpdir(), "seo-report-"));
       filePath = path.join(directory, `report.${format}`);
       if (format === "csv") {
@@ -255,6 +332,7 @@ export function createReportExportService({
           websiteName: website.website_name,
           startDate,
           endDate,
+          worksheets,
           signal
         });
         await ensureValidXlsx(filePath);

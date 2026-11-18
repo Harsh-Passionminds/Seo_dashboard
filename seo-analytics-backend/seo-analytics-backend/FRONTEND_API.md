@@ -934,6 +934,8 @@ For `traffic_acquisition`, `data.current` and `data.comparison` retain the selec
 
 Exports the same persisted report sources and metric fields as the comparison/report services. Required parameters are `source`, `startDate`, and `endDate`. `format` is `csv` (default) or `xlsx`; supported metrics, dimensions, and filters follow the comparison endpoint. `sortBy` and `order` control row order. CSV uses UTF-8, escapes CSV syntax, and neutralizes formula-leading untrusted text. XLSX files contain a title, website, reporting period, typed date/number cells, and formatted percentage metrics. Export datasets are bounded to 20,000 rows; larger results return `413 REPORT_TOO_LARGE` and can be narrowed with dates or filters.
 
+For `source=combined`, CSV rows are section-labelled (`GSC`, `GA4`, or `Keyword Tracking`). XLSX contains separate `GSC`, `GA4`, and `Keywords` worksheets; the keyword worksheet contains one row per tracked keyword, including keywords without history. GSC and GA4 worksheets retain their daily date-series values. The existing exporter does not generate PDF files or embed chart objects; use the on-screen Combined Report for rendered graphs.
+
 Example CSV:
 
 ```http

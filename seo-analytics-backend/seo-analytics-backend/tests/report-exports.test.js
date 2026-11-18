@@ -226,3 +226,75 @@ test("empty CSV exports still contain the requested headers", async () => {
     await service.cleanup(output);
   }
 });
+
+test("combined XLSX export contains GSC, GA4, and unified unique keyword worksheets", async () => {
+  const service = createReportExportService({
+    dataService: {
+      async getSourceRows({ source }) {
+        return source === "gsc"
+          ? [{ report_date: "2026-11-01", clicks: 4, impressions: 20, ctr: 0.2, average_position: 5 }]
+          : [{ report_date: "2026-11-01", organic_sessions: 8, total_form_conversions: 2 }];
+      },
+      async getUnifiedKeywordRows() {
+        return [
+          {
+            keyword_id: 3,
+            keyword: "alpha",
+            clicks: 2,
+            impressions: 10,
+            ctr: 0.2,
+            average_position: 4,
+            previous_average_position: 6,
+            last_observation_date: "2026-11-01",
+            tracking_status: "updated"
+          }
+        ];
+      }
+    },
+    repository: { async recordReportExport() {} }
+  });
+  const output = await service.generate({
+    ...baseExport,
+    source: "combined",
+    format: "xlsx"
+  });
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(output.filePath);
+    assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["GSC", "GA4", "Keywords"]);
+    assert.equal(workbook.getWorksheet("GSC").getCell("A5").value instanceof Date, true);
+    assert.equal(workbook.getWorksheet("GA4").getCell("B5").value, 8);
+    const keywords = workbook.getWorksheet("Keywords");
+    assert.equal(keywords.getCell("B5").value, "alpha");
+    assert.equal(keywords.getCell("H5").value, 4);
+    assert.equal(keywords.getCell("D5").value, "updated");
+    assert.equal(output.rowCount, 3);
+  } finally {
+    await service.cleanup(output);
+  }
+});
+
+test("combined CSV export uses section labels and includes unified keyword rows", async () => {
+  const service = createReportExportService({
+    dataService: {
+      async getSourceRows({ source }) {
+        return [{ report_date: "2026-11-01", ...(source === "gsc" ? { clicks: 4 } : { organic_sessions: 8 }) }];
+      },
+      async getUnifiedKeywordRows() {
+        return [{ keyword_id: 3, keyword: "alpha", clicks: 2, tracking_status: "updated" }];
+      }
+    },
+    repository: { async recordReportExport() {} }
+  });
+  const output = await service.generate({ ...baseExport, source: "combined", format: "csv" });
+  try {
+    const csv = await readFile(output.filePath, "utf8");
+    assert.match(csv, /Section,Date,Keyword ID,Keyword/);
+    assert.match(csv, /GSC,2026-11-01/);
+    assert.match(csv, /GA4,2026-11-01/);
+    assert.match(csv, /Keyword Tracking,,3,alpha/);
+    assert.equal(output.rowCount, 3);
+  } finally {
+    await service.cleanup(output);
+  }
+});
