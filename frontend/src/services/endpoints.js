@@ -18,6 +18,7 @@ export const getGsc = (id, r) => api(`/websites/${id}/gsc?${q(r)}`);
 export const getGa4 = (id, r, reportType = "summary", dimensionType = "default_channel_group") =>
   api(`/websites/${id}/ga4?${qs({ ...r, reportType, dimensionType })}`);
 export const getKeywords = (id) => api(`/websites/${id}/gsc/keywords`);
+export const getKeywordReport = (id, params) => api(`/websites/${id}/keywords/report?${qs(params)}`);
 export const addKeyword = (id, keyword) =>
   api(`/websites/${id}/gsc/keywords`, { method: "POST", body: JSON.stringify({ keyword }) });
 export const getKeywordHistory = (id, kid, r) =>
@@ -27,6 +28,9 @@ export const syncKeywordHistory = (id, kid, r) =>
 export const addWebsite = (body) => api("/websites", { method: "POST", body: JSON.stringify(body) });
 export const syncWebsite = (id) => api(`/websites/${id}/sync`, { method: "POST" });
 export const getSyncJobs = () => api("/sync-jobs");
+export const getSyncStatus = () => api("/sync-jobs/status");
+export const getSyncJob = (id) => api(`/sync-jobs/${id}`);
+export const retrySyncJob = (id) => api(`/sync-jobs/${id}/retry`, { method: "POST" });
 export const deleteKeyword = (id, kid) => api(`/websites/${id}/gsc/keywords/${kid}`, { method: "DELETE" });
 const send = (method, body) => ({ method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 

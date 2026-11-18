@@ -1,10 +1,24 @@
 import express from "express";
 import { requireAuth, requireOrganizationMembership, requirePasswordChange, requireRole } from "../middleware/auth.js";
-import { getAuthorizedJob } from "../services/sync.service.js";
+import {
+  getAuthorizedJob,
+  getSyncStatus,
+  retrySyncJob,
+  sanitizeSyncError
+} from "../services/sync.service.js";
 import { pool } from "../db/pool.js";
 
 export const syncRouter = express.Router();
 syncRouter.use(requireAuth, requireOrganizationMembership, requirePasswordChange, requireRole("admin"));
+
+syncRouter.get("/status", async (req, res, next) => {
+  try {
+    const status = await getSyncStatus(req.organization.organization_id);
+    res.json({ status });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // GET /api/sync-jobs — list recent jobs for the signed-in user
 syncRouter.get("/", async (req, res, next) => {
@@ -21,10 +35,18 @@ syncRouter.get("/", async (req, res, next) => {
          j.requested_start_date,
          j.requested_end_date,
          j.rows_fetched,
+         j.rows_inserted,
+         j.rows_updated,
+         j.attempt_count,
          j.error_message,
          j.created_at,
          j.started_at,
-         j.completed_at
+         j.completed_at,
+         CASE
+           WHEN j.started_at IS NOT NULL AND j.completed_at IS NOT NULL
+             THEN TIMESTAMPDIFF(MICROSECOND, j.started_at, j.completed_at) / 1000
+           ELSE NULL
+         END AS duration_ms
        FROM sync_jobs AS j
        INNER JOIN website_credentials AS w
          ON w.website_id = j.website_id
@@ -34,7 +56,9 @@ syncRouter.get("/", async (req, res, next) => {
       [req.organization.organization_id]
     );
 
-    res.json({ jobs });
+    res.json({
+      jobs: jobs.map((job) => ({ ...job, error_message: sanitizeSyncError(job.error_message) }))
+    });
   } catch (error) {
     next(error);
   }
@@ -56,15 +80,11 @@ syncRouter.get("/:jobId", async (req, res, next) => {
 syncRouter.post("/:jobId/retry", async (req, res, next) => {
   try {
     const jobId = Number(req.params.jobId);
-    const job = await getAuthorizedJob(jobId, req.organization.organization_id);
-    if (job.status !== "failed") {
-      return res.status(409).json({ error: { code: "JOB_NOT_FAILED", message: "Only failed jobs can be retried." } });
+    if (!Number.isSafeInteger(jobId) || jobId <= 0) {
+      return res.status(400).json({ error: { code: "INVALID_JOB_ID", message: "Invalid sync job ID." } });
     }
-    await (await import("../db/pool.js")).pool.execute(
-      "UPDATE sync_jobs SET status = 'queued', attempt_count = 0, error_message = NULL, completed_at = NULL WHERE job_id = ?",
-      [jobId]
-    );
-    res.status(202).json({ jobId, status: "queued" });
+    const retry = await retrySyncJob(jobId, req.organization.organization_id);
+    res.status(202).json(retry);
   } catch (error) {
     next(error);
   }

@@ -49,6 +49,33 @@ test("user acquisition sums additive same-day dimensions but leaves non-additive
   );
 });
 
+test("user acquisition rates and durations use underlying session weights", () => {
+  const result = buildReportChartSeries({
+    currentRows: [
+      { date: "2026-01-01", engagedSessions: 8, engagementRate: 0.8, averageSessionDuration: 10 },
+      { date: "2026-01-01", engagedSessions: 9, engagementRate: 0.5, averageSessionDuration: 30 }
+    ],
+    comparisonRows: [],
+    currentPeriod: { startDate: "2026-01-01", endDate: "2026-01-01" },
+    comparisonPeriod: { startDate: "2025-12-31", endDate: "2025-12-31" },
+    metric: "engagementRate",
+    source: "user_acquisition"
+  });
+  const duration = buildReportChartSeries({
+    currentRows: [
+      { date: "2026-01-01", engagedSessions: 8, engagementRate: 0.8, averageSessionDuration: 10 },
+      { date: "2026-01-01", engagedSessions: 9, engagementRate: 0.5, averageSessionDuration: 30 }
+    ],
+    comparisonRows: [],
+    currentPeriod: { startDate: "2026-01-01", endDate: "2026-01-01" },
+    comparisonPeriod: { startDate: "2025-12-31", endDate: "2025-12-31" },
+    metric: "averageSessionDuration",
+    source: "user_acquisition"
+  });
+  assert.ok(Math.abs(result.data[0].current - (17 / 28)) < 1e-12);
+  assert.ok(Math.abs(duration.data[0].current - (640 / 28)) < 1e-12);
+});
+
 test("invalid metrics and dates never produce NaN chart values", () => {
   const result = buildReportChartSeries({
     currentRows: [{ date: "2026-01-01", clicks: "not-a-number" }],

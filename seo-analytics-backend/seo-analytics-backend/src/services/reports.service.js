@@ -58,6 +58,7 @@ export function createReportsService({
     getGa4DailySummary: ga4.getDailySummary,
     getUserAcquisition: ga4.getUserAcquisition,
     getTrafficAcquisition: acquisition.getTrafficAcquisition,
+    getTrafficAcquisitionDaily: repository.getTrafficAcquisitionDaily,
     requestTrafficSync: acquisition.requestTrafficSync
   };
 }

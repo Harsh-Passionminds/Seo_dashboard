@@ -1,6 +1,6 @@
 import { pool } from "../db/pool.js";
 import { env } from "../config/env.js";
-import { processSyncJob } from "./sync.service.js";
+import { processSyncJob, sanitizeSyncError } from "./sync.service.js";
 
 let timer = null;
 let running = false;
@@ -44,7 +44,7 @@ async function runOneJob() {
       const [rows] = await pool.execute("SELECT attempt_count FROM sync_jobs WHERE job_id = ?", [job.job_id]);
       const attempts = rows[0]?.attempt_count || 1;
       const status = attempts < env.MAX_SYNC_ATTEMPTS ? "queued" : "failed";
-      const safeMessage = String(error.message || "Sync failed").slice(0, 4000);
+      const safeMessage = sanitizeSyncError(error.message) || "Sync failed";
       await pool.execute(
         `UPDATE sync_jobs SET status = ?, error_message = ?, completed_at = IF(? = 'failed', NOW(), NULL),
            updated_at = NOW() WHERE job_id = ?`,

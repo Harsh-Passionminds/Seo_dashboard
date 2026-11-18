@@ -89,9 +89,11 @@ The frontend developer guide, including startup/login flow, role-aware UI guidan
 - `GET /api/websites/:id/gsc?startDate=...&endDate=...`
 - `GET /api/websites/:id/ga4?reportType=traffic_acquisition&dimensionType=default_channel_group|source_medium&startDate=...&endDate=...` — stored rows and range totals
 - `GET /api/websites/:id/ga4?reportType=summary|user_acquisition&dimensionType=default_channel_group|source_medium&startDate=...&endDate=...`
+- `GET /api/websites/:id/keywords/report?startDate=...&endDate=...&search=...&sort=...&page=...&limit=...` — unified, paginated keyword report
 - `POST /api/websites/:id/traffic-acquisition/sync` — queue a traffic acquisition refresh; JSON body: `{ "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD" }`
 - `POST /api/websites/:id/sync` — queue missing/recent refresh
-- `/api/sync-jobs` — Admin-only organization synchronization status and retry
+- `GET /api/sync-jobs/status` and `/api/sync-jobs` — Admin-only per-source synchronization status and history
+- `POST /api/sync-jobs/:jobId/retry` — Admin-only; creates a new attempt while preserving the failed job record
 
 All report endpoints read from the database. They do not call Google synchronously during a dashboard request. When a sync is queued, the API returns existing stored data and the job status can be polled.
 

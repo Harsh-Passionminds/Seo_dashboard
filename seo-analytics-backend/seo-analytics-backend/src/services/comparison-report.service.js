@@ -183,6 +183,25 @@ export function createComparisonReportService({ dataService = reportDataService 
           order
         })
       ]);
+      const [currentSeries, comparisonSeries] = source === "traffic_acquisition" &&
+        typeof dataService.getSourceSeries === "function"
+        ? await Promise.all([
+            dataService.getSourceSeries({
+              source,
+              website,
+              userId,
+              ...current,
+              filters
+            }),
+            dataService.getSourceSeries({
+              source,
+              website,
+              userId,
+              ...comparison,
+              filters
+            })
+          ])
+        : [null, null];
 
       const summary = Object.fromEntries(metrics.map((metric) => [
         metric,
@@ -207,7 +226,13 @@ export function createComparisonReportService({ dataService = reportDataService 
         summary,
         data: {
           current: currentRows.map((row) => projectRow(row, dimensions, metrics)),
-          comparison: previousRows.map((row) => projectRow(row, dimensions, metrics))
+          comparison: previousRows.map((row) => projectRow(row, dimensions, metrics)),
+          ...(currentSeries && comparisonSeries
+            ? {
+                currentSeries: currentSeries.map((row) => projectRow(row, ["date"], metrics)),
+                comparisonSeries: comparisonSeries.map((row) => projectRow(row, ["date"], metrics))
+              }
+            : {})
         },
         metadata: {
           generatedAt: new Date().toISOString(),

@@ -6,7 +6,14 @@ import {
   syncGscKeywordsRange
 } from "../services/gsc-keywords.service.js";
 import { reportsService } from "../services/reports.service.js";
-import { parseGa4ReportQuery, parseKeywordBody, parseKeywordId, parseReportDateRange } from "../validators/reports.validator.js";
+import { keywordReportService } from "../services/keyword-report.service.js";
+import {
+  parseGa4ReportQuery,
+  parseKeywordBody,
+  parseKeywordId,
+  parseKeywordReportQuery,
+  parseReportDateRange
+} from "../validators/reports.validator.js";
 
 function handler(operation) {
   return async (req, res, next) => {
@@ -20,6 +27,7 @@ function handler(operation) {
 
 export function createReportsController({
   service = reportsService,
+  keywordReport = keywordReportService,
   keywords = {
     add: addTrackedKeyword,
     remove: deleteTrackedKeyword,
@@ -61,6 +69,15 @@ export function createReportsController({
         keywords: keywordsList,
         count: keywordsList.length
       });
+    }),
+
+    getKeywordReport: handler(async (req, res) => {
+      const query = parseKeywordReportQuery(req.query);
+      const report = await keywordReport.list({
+        websiteId: req.website.website_id,
+        ...query
+      });
+      res.json({ websiteId: req.website.website_id, ...report });
     }),
 
     addKeyword: handler(async (req, res) => {

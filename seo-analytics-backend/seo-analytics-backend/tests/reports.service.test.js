@@ -211,3 +211,33 @@ test("report repository uses parameterized website and date filters", async () =
   assert.match(calls[0].sql, /FROM google_search_console_data/);
   assert.match(calls[0].sql, /website_id = \? AND report_date BETWEEN \? AND \?/);
 });
+
+test("traffic acquisition daily graph query is scoped by user, website, dimension, and inclusive dates", async () => {
+  let received;
+  const repository = createReportsRepository({
+    async execute(sql, params) {
+      received = { sql, params };
+      return [[{ report_date: "2026-11-01", sessions: "20", engaged_sessions: "15" }]];
+    }
+  });
+  const rows = await repository.getTrafficAcquisitionDaily({
+    userId: 7,
+    websiteId: 14,
+    startDate: "2026-11-01",
+    endDate: "2026-11-07",
+    dimensionType: "source_medium",
+    dimensionValue: "search / organic"
+  });
+
+  assert.deepEqual(received.params, [7, 14, "source_medium", "2026-11-01", "2026-11-07", "search / organic"]);
+  assert.match(received.sql, /FROM ga4_traffic_acquisition_data/);
+  assert.match(received.sql, /user_id = \? AND website_id = \? AND dimension_type = \?/);
+  assert.match(received.sql, /report_date BETWEEN \? AND \?/);
+  assert.deepEqual(rows[0], {
+    report_date: "2026-11-01",
+    date: "2026-11-01",
+    sessions: 20,
+    engagedSessions: 15,
+    engagementRate: 0.75
+  });
+});

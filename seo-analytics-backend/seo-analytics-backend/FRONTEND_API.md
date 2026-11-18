@@ -167,14 +167,16 @@ All paths below are relative to the backend origin except `GET /health`, which i
 | `GET` | `/api/websites/:websiteId/gsc` | Admin or assigned employee | Read site-level GSC daily metrics |
 | `GET` | `/api/websites/:websiteId/ga4` | Admin or assigned employee | Read GA4 summary or acquisition report |
 | `POST` | `/api/websites/:websiteId/traffic-acquisition/sync` | Organization Admin | Queue GA4 Traffic Acquisition refresh |
+| `GET` | `/api/websites/:websiteId/keywords/report` | Admin or assigned employee | Search, sort, filter, and page through unified stored keyword performance |
 | `GET` | `/api/websites/:websiteId/gsc/keywords` | Admin or assigned employee | List tracked keywords |
 | `POST` | `/api/websites/:websiteId/gsc/keywords` | Organization Admin | Add one tracked keyword |
 | `DELETE` | `/api/websites/:websiteId/gsc/keywords/:keywordId` | Organization Admin | Delete keyword and its history |
 | `GET` | `/api/websites/:websiteId/gsc/keywords/:keywordId/history` | Admin or assigned employee | Read stored daily keyword history |
 | `POST` | `/api/websites/:websiteId/gsc/keywords/:keywordId/history/sync` | Organization Admin | Sync keyword history |
 | `GET` | `/api/sync-jobs` | Organization Admin | List recent organization sync jobs |
+| `GET` | `/api/sync-jobs/status` | Organization Admin | Read per-website/source checkpoints and persisted date ranges |
 | `GET` | `/api/sync-jobs/:jobId` | Organization Admin | Get one organization sync job |
-| `POST` | `/api/sync-jobs/:jobId/retry` | Organization Admin | Requeue a failed job |
+| `POST` | `/api/sync-jobs/:jobId/retry` | Organization Admin | Create a new retry job for a failed job |
 
 ### Common path and request rules
 
@@ -402,7 +404,50 @@ If an equivalent report job is already queued or running, its job ID is returned
 
 ## 5. Keyword Tracking API
 
-Keyword endpoints are mounted under `/api/websites/:websiteId/gsc/keywords`. Read endpoints require an Admin or a currently assigned employee; keyword creation, deletion, and history synchronization are Admin-only. Keywords are manually entered; this API does not provide suggestions or keyword discovery.
+Keyword endpoints are mounted under `/api/websites/:websiteId`. Read endpoints require an Admin or a currently assigned employee; keyword creation, deletion, and history synchronization are Admin-only. The unified report includes all records in `tracked_keywords`; the current schema has no separate imported/discovered keyword source. It does not provide search volume, ranking URL, device, or country fields because those values are not stored by this application.
+
+### `GET /api/websites/:websiteId/keywords/report`
+
+Returns the selected website's complete tracked-keyword set, with one result per stable website/keyword identity. Date ranges apply to daily metrics and current-position observations; the previous position is the latest stored observation before the selected range. Keywords with no observation in the selected range remain in the result and are marked `not_recently_updated` or `no_history`.
+
+Supported query parameters:
+
+- Required: `startDate`, `endDate` (`YYYY-MM-DD`, inclusive, maximum 550 days).
+- Optional: `search` (case-insensitive substring, maximum 500 characters).
+- Optional: `sort`: `keyword`, `averagePosition`, `previousAveragePosition`, `positionChange`, `clicks`, `impressions`, `ctr`, `lastUpdated`, or `trackingStatus`.
+- Optional: `order=asc|desc`, `page` (1-based), and `limit` (1–100; default 25).
+
+Example:
+
+```http
+GET /api/websites/12/keywords/report?startDate=2026-11-01&endDate=2026-11-17&search=marketing&sort=averagePosition&order=asc&page=1&limit=25
+```
+
+Response:
+
+```json
+{
+  "websiteId": 12,
+  "dateRange": { "startDate": "2026-11-01", "endDate": "2026-11-17" },
+  "rows": [{
+    "keywordId": 81,
+    "websiteId": 12,
+    "keyword": "digital marketing",
+    "clicks": 24,
+    "impressions": 410,
+    "ctr": 0.0585,
+    "averagePosition": 8.25,
+    "previousAveragePosition": 9.1,
+    "positionChange": -0.85,
+    "positionTrend": "improved",
+    "lastUpdated": "2026-11-17",
+    "trackingStatus": "updated"
+  }],
+  "pagination": { "page": 1, "limit": 25, "total": 1, "totalPages": 1 }
+}
+```
+
+Position change is current minus previous, so a negative value means improvement. Missing metrics are `null`; they are not converted to zero. The query is scoped to the website and uses the existing unique key `(website_id, keyword_normalized)`.
 
 ### `GET /api/websites/:websiteId/gsc/keywords`
 
@@ -549,12 +594,12 @@ The database cascades deletion to that keyword's historical rows. The route only
 Recommended lifecycle for a Keyword Tracking view:
 
 1. Load websites with `GET /api/websites`; require the user to select one before keyword operations.
-2. Load its keywords with `GET /api/websites/:websiteId/gsc/keywords`.
+2. Load its complete, searchable report with `GET /api/websites/:websiteId/keywords/report`, passing the selected date range and pagination/sort controls.
 3. Add a keyword with `POST`. On `409`, keep the form value and show the duplicate message.
 4. Select a keyword and request stored history for the selected date range.
 5. To fetch/revise data, call the history `sync` endpoint, show a busy state while the request is pending, then request history again.
 6. On website/date-range/keyword change, load the appropriate list or history. Do not fetch the complete history just because the user opens the view.
-7. On deletion, clear the selected history if it was the deleted keyword and reload the list.
+7. On deletion, clear the selected history if it was the deleted keyword and reload the report.
 8. Export only the currently loaded rows. The browser can generate CSV from the history response; there is no backend keyword CSV endpoint.
 
 The supplied frontend uses the global start/end date controls for keyword history. The `Apply` button reloads history with the selected range. A separate date control can be added, but it should use the same `YYYY-MM-DD` parameters and validation.
@@ -732,11 +777,14 @@ The response represents queued work, unlike the per-keyword history sync endpoin
 
 ## 8. Sync activity
 
+- `GET /api/sync-jobs/status`: Admin-only; returns a `status` array with one row per configured source/report type and website. It combines job/checkpoint state with earliest/latest dates found in the corresponding persisted SQL data tables. For a website with no GSC property, the GSC status is `not_configured`; missing job/checkpoint state is `never_synchronized`. `nextScheduledAt` is `null` because no recurring schedule is configured.
 - `GET /api/sync-jobs`: Admin-only; returns `{ "jobs": [...] }`, up to the 100 most recent jobs in the organization.
 - `GET /api/sync-jobs/:jobId`: Admin-only; returns `{ "job": {...} }` for a job in the organization.
-- `POST /api/sync-jobs/:jobId/retry`: requeues a failed job and returns `202 Accepted`. A non-failed job returns `409 JOB_NOT_FAILED`.
+- `POST /api/sync-jobs/:jobId/retry`: creates a new queued job with the failed job's website, source, type, and requested range, preserving the failed job in history. Returns `202 Accepted`. A non-failed job returns `409 JOB_NOT_FAILED`.
 
-Job status is `queued`, `running`, `completed`, `failed`, or `cancelled`. Records include source, report type, sync type, requested range, fetched row count, error message, and timestamps. The frontend may poll while status is `queued` or `running`, but should stop on terminal status. Keyword-specific history sync is synchronous despite returning 202 and does not appear here.
+Job status is `queued`, `running`, `completed`, `failed`, or `cancelled`. Records include source, report type, sync type, requested range, fetched/inserted/updated row counts, error message, and timestamps. Completion is written only after the worker's sync processing returns after database persistence. The worker prevents duplicate active jobs per website/source/report type using a transaction that locks the website row. The frontend may poll while status is `queued` or `running`, but should stop on terminal status. Keyword-specific history sync is synchronous despite returning 202 and does not appear here.
+
+`POST /api/websites/:websiteId/sync` queues the existing standard refresh. It chooses historical work when no checkpoint exists and a lookback refresh when one does; it does not accept a caller-selected date range or expose a separately scheduled recurring job. Error strings exposed in Admin sync responses are redacted for common OAuth and credential token patterns.
 
 ## 9. Errors and status handling
 
@@ -879,6 +927,8 @@ Response shape:
 ```
 
 Values above illustrate the response shape only. Actual values are read from persisted records. Percentage change is `null` when the previous value is zero or either period has no usable value. CTR is computed from period clicks divided by period impressions; average position is impression-weighted for GSC, and keyword rank uses each period's latest observation. Engagement rate uses combined engaged sessions divided by sessions. User-acquisition total/active users are unavailable as period-level distinct counts and therefore return `null` in the summary rather than summing daily users. Position `trend` describes its numeric movement; `performanceTrend` indicates improvement when the average position decreases.
+
+For `traffic_acquisition`, `data.current` and `data.comparison` retain the selected channel/source dimension rows used in the report table. The response additionally includes `data.currentSeries` and `data.comparisonSeries`, daily date-grouped `sessions`, `engagedSessions`, and `engagementRate` values read from `ga4_traffic_acquisition_data`; use these fields for the time-series graph.
 
 ### `GET /api/websites/:websiteId/reports/export`
 

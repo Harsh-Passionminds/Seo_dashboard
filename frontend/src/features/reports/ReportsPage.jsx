@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { exportReport, getReportComparison, getKeywords } from "../../services/endpoints";
 import { useWebsite, useDateRange } from "../../hooks/useAppContext";
 import { useSession } from "../../hooks/useSession";
 import { toNum } from "../../utils/format";
-import { buildReportChartSeries } from "../../utils/report-series";
+import ComparisonGraph from "../../components/charts/ComparisonGraph";
 
 const SOURCES = [
   ["gsc", "Search Console"],
@@ -123,17 +122,9 @@ export default function ReportsPage() {
   const keys = Object.keys(summary);
   const cur = res?.data?.current ?? [];
   const prev = res?.data?.comparison ?? [];
-  const hasDates = cur.some((row) => row.date) || prev.some((row) => row.date);
-  const chart = buildReportChartSeries({
-    currentRows: cur,
-    comparisonRows: prev,
-    currentPeriod: res?.periods?.current,
-    comparisonPeriod: res?.periods?.comparison,
-    metric: chartMetric,
-    source
-  });
-  const chartData = hasDates ? chart.data : [];
-  const chartMaxDay = chart.maxDay;
+  const graphMetrics = keys
+    .filter((key) => [...cur, ...prev].some((row) => Object.hasOwn(row, key)))
+    .map((key) => ({ key, label: key }));
   const currentError = gen.error && gen.variables?.contextKey === reportContextKey ? gen.error : null;
   const tableRows = view === "current" ? cur : prev;
 
@@ -267,26 +258,19 @@ export default function ReportsPage() {
             </p>
           </section>
 
-          {hasDates && chartMetric && (
-            <section className="rounded-lg border bg-white p-4">
-              <select value={chartMetric} onChange={(e) => setChartMetric(e.target.value)} className="mb-3 rounded border px-2 py-1 text-sm">
-                {keys.filter((k) => k in cur[0]).map((k) => <option key={k} value={k}>{k}</option>)}
-              </select>
-              <div className="h-72">
-                <ResponsiveContainer>
-                  <LineChart data={chartData}>
-                    <CartesianGrid vertical={false} stroke="#eee" />
-                    <XAxis dataKey="day" type="number" domain={[1, chartMaxDay]} allowDecimals={false} />
-                    <YAxis reversed={lowerBetter(chartMetric)} domain={["auto", "auto"]} />
-                    <Tooltip labelFormatter={(d) => `Day ${d}`} />
-                    <Legend />
-                    <Line dataKey="current" name="Current" stroke="#4285f4" strokeWidth={2} dot={false} />
-                    <Line dataKey="previous" name="Comparison" stroke="#9aa0a6" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <p className="mt-1 text-xs text-gray-500">X-axis is the day number within each period.</p>
-            </section>
+          {graphMetrics.length > 0 && chartMetric && (
+            <ComparisonGraph
+              currentRows={res.data?.currentSeries ?? cur}
+              comparisonRows={res.data?.comparisonSeries ?? prev}
+              currentPeriod={res.periods?.current}
+              comparisonPeriod={res.periods?.comparison}
+              source={source}
+              metrics={graphMetrics}
+              metric={chartMetric}
+              onMetricChange={setChartMetric}
+              currentLabel="Current"
+              comparisonLabel="Comparison"
+            />
           )}
 
           <section>

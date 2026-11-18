@@ -138,7 +138,26 @@ export function createReportDataService({
     return sortRows(rows, sortBy, order);
   }
 
-  return { getSourceRows };
+  async function getSourceSeries({
+    source,
+    userId,
+    website,
+    startDate,
+    endDate,
+    filters = {}
+  }) {
+    if (source !== "traffic_acquisition") return null;
+    return service.getTrafficAcquisitionDaily({
+      userId: website.owner_user_id ?? userId,
+      websiteId: website.website_id,
+      startDate,
+      endDate,
+      dimensionType: filters.dimensionType ?? "default_channel_group",
+      dimensionValue: filters.dimensionValue
+    });
+  }
+
+  return { getSourceRows, getSourceSeries };
 }
 
 export const reportDataService = createReportDataService();

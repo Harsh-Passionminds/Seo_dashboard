@@ -2,10 +2,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, startOfMonth, endOfMonth, subMonths, subDays, parseISO, differenceInCalendarDays } from "date-fns";
 import { getGsc } from "../../services/endpoints";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useWebsite } from "../../hooks/useAppContext";
 import QueryState from "../../components/ui/QueryState";
 import { toNum, fmtInt, fmtPct, fmtPos, change } from "../../utils/format";
+import ComparisonGraph from "../../components/charts/ComparisonGraph";
 
 const iso = (d) => format(d, "yyyy-MM-dd");
 const monthLabel = (ym) => {
@@ -64,41 +64,6 @@ const METRIC_OPTIONS = {
   average_position: { label: "Average position", color: "#e8710a" },
 };
 
-// one point per stored day only; missing days are not filled in
-function toSeries(rows, key, startDate) {
-  return rows
-    .map((r) => {
-      let v = toNum(r[key]);
-      if (v != null && key === "ctr") v = v * 100;
-      const day = differenceInCalendarDays(parseISO(String(r.report_date).slice(0, 10)), parseISO(startDate)) + 1;
-      return { day, value: v };
-    })
-    .filter((p) => p.value != null);
-}
-
-function MonthChart({ title, data, domain, color, reversed, maxDay }) {
-  return (
-    <div className="rounded-lg border p-3">
-      <div className="mb-2 text-sm font-medium">{title}</div>
-      {!data.length ? (
-        <div className="flex h-56 items-center justify-center text-sm text-gray-500">No data stored for this period</div>
-      ) : (
-        <div className="h-56">
-          <ResponsiveContainer>
-            <LineChart data={data}>
-              <CartesianGrid vertical={false} stroke="#eee" />
-              <XAxis dataKey="day" type="number" domain={[1, maxDay]} allowDataOverflow allowDecimals={false} />
-              <YAxis reversed={reversed} domain={domain} />
-              <Tooltip labelFormatter={(d) => `Day ${d}`} />
-              <Line dataKey="value" stroke={color} strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function PeriodPicker({ mode, setMode, month, setMonth, custom, setCustom }) {
   const maxDate = iso(subDays(new Date(), 1));
   return (
@@ -152,14 +117,6 @@ export default function MonthlyComparison() {
   const a = summarize(qa.data?.rows ?? []);
   const b = summarize(qb.data?.rows ?? []);
 
-  const sa = toSeries(qa.data?.rows ?? [], metric, ra.startDate);
-  const sb = toSeries(qb.data?.rows ?? [], metric, rb.startDate);
-  const span = (r) => (r.valid ? differenceInCalendarDays(parseISO(r.endDate), parseISO(r.startDate)) + 1 : 1);
-  const maxDay = Math.max(span(ra), span(rb));
-  const all = [...sa, ...sb].map((p) => p.value);
-  const hi = all.length ? Math.ceil(Math.max(...all)) : 0;
-  const lo = all.length ? Math.floor(Math.min(...all)) : 0;
-  const domain = metric === "average_position" ? [lo, hi] : [0, hi];
   const loading = qa.isLoading || qb.isLoading;
   const error = qa.error || qb.error;
   const bothEmpty = !loading && !error && !a.days && !b.days;
@@ -184,18 +141,19 @@ export default function MonthlyComparison() {
       {ra.valid && rb.valid && (
         <QueryState query={{ isLoading: loading, error, refetch: () => { qa.refetch(); qb.refetch(); } }} isEmpty={bothEmpty}>
           <div className="mb-4">
-            <select value={metric} onChange={(e) => setMetric(e.target.value)} className="mb-3 rounded border px-2 py-1 text-sm">
-              {Object.entries(METRIC_OPTIONS).map(([k, m]) => (
-                <option key={k} value={k}>{m.label}</option>
-              ))}
-            </select>
-            <div className="grid gap-4 md:grid-cols-2">
-              <MonthChart title={titleA} maxDay={maxDay} data={sa} domain={domain}
-                color={METRIC_OPTIONS[metric].color} reversed={metric === "average_position"} />
-              <MonthChart title={titleB} maxDay={maxDay} data={sb} domain={domain}
-                color={METRIC_OPTIONS[metric].color} reversed={metric === "average_position"} />
-            </div>
-            <p className="mt-2 text-xs text-gray-500">Both charts use the same scale. The X-axis is the day number within each period.</p>
+            <ComparisonGraph
+              currentRows={qa.data?.rows ?? []}
+              comparisonRows={qb.data?.rows ?? []}
+              currentPeriod={ra}
+              comparisonPeriod={rb}
+              source="gsc"
+              metrics={Object.entries(METRIC_OPTIONS).map(([key, item]) => ({ key, label: item.label }))}
+              metric={metric}
+              onMetricChange={setMetric}
+              layout="periods"
+              currentLabel={titleA}
+              comparisonLabel={titleB}
+            />
           </div>
 
           <table className="w-full text-sm">

@@ -162,6 +162,46 @@ test("engagement rate uses combined engaged sessions and sessions", async () => 
   assert.equal(result.summary.engagementRate.previousValue, 0.6);
 });
 
+test("traffic acquisition comparisons retain dimension totals and include daily SQL-backed graph series", async () => {
+  const parsed = parseComparisonQuery({
+    source: "traffic_acquisition",
+    currentStartDate: "2026-11-02",
+    currentEndDate: "2026-11-03",
+    compareStartDate: "2026-10-31",
+    compareEndDate: "2026-11-01",
+    metrics: "sessions,engagedSessions",
+    filters: JSON.stringify({ dimensionType: "source_medium" })
+  });
+  const service = createComparisonReportService({
+    dataService: {
+      async getSourceRows({ startDate }) {
+        return [{ dimensionValue: "search / organic", sessions: startDate === "2026-11-02" ? 9 : 5, engagedSessions: 4 }];
+      },
+      async getSourceSeries({ startDate }) {
+        return [{ report_date: startDate, date: startDate, sessions: 9, engagedSessions: 4 }];
+      }
+    }
+  });
+
+  const result = await service.compare({
+    ...parsed,
+    website,
+    userId: 7,
+    timeZone: "UTC"
+  });
+  assert.equal(result.data.current[0].dimensionValue, "search / organic");
+  assert.deepEqual(result.data.currentSeries, [{
+    date: "2026-11-02",
+    sessions: 9,
+    engagedSessions: 4
+  }]);
+  assert.deepEqual(result.data.comparisonSeries, [{
+    date: "2026-10-31",
+    sessions: 9,
+    engagedSessions: 4
+  }]);
+});
+
 test("keyword ranking comparison uses latest observation, where lower position is improvement", async () => {
   const parsed = parseComparisonQuery({
     source: "keyword_tracking",

@@ -49,6 +49,7 @@ reportsRouter.get(
 reportsRouter.get("/:websiteId/overview", requireWebsiteReportAccess, reportsController.getOverview);
 reportsRouter.get("/:websiteId/gsc", requireWebsiteReportAccess, reportsController.getGsc);
 
+reportsRouter.get("/:websiteId/keywords/report", requireWebsiteReportAccess, reportsController.getKeywordReport);
 reportsRouter.get("/:websiteId/gsc/keywords", requireWebsiteReportAccess, reportsController.listKeywords);
 reportsRouter.post("/:websiteId/gsc/keywords", requireWebsiteReportOwner, reportsController.addKeyword);
 reportsRouter.delete("/:websiteId/gsc/keywords/:keywordId", requireWebsiteReportOwner, reportsController.deleteKeyword);
