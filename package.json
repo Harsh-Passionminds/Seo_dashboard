@@ -1,0 +1,20 @@
+{
+  "name": "seo-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start":""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Harsh-Passionminds/Seo_dashboard.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Harsh-Passionminds/Seo_dashboard/issues"
+  },
+  "homepage": "https://github.com/Harsh-Passionminds/Seo_dashboard#readme"
+}
