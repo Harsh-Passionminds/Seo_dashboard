@@ -8,7 +8,7 @@ import QueryState from "../../components/ui/QueryState";
 import { toNum, fmtInt, fmtPct, downloadCsv } from "../../utils/format";
 import { exportExcelReport } from "../../utils/excel-chart-export";
 
-const TABS = ["User Acquisition", "Traffic Acquisition", "Visitor Entry"];
+const TABS = ["User Acquisition", "Traffic Acquisition"];
 
 function Traffic({ dim }) {
   const { websiteId } = useWebsite();
@@ -204,21 +204,15 @@ export default function AcquisitionPage() {
             </button>
           ))}
         </div>
-        {tab !== "Visitor Entry" && (
           <select value={dim} onChange={(e) => setDim(e.target.value)} className="mb-1 rounded border px-2 py-1 text-sm">
-            <option value="default_channel_group">Channel group</option>
-            <option value="source_medium">Source / medium</option>
-          </select>
-        )}
+          <option value="default_channel_group">Channel group</option>
+          <option value="source_medium">Source / medium</option>
+        </select>
       </div>
 
       {tab === "User Acquisition" && <User dim={dim} />}
       {tab === "Traffic Acquisition" && <Traffic dim={dim} />}
-      {tab === "Visitor Entry" && (
-        <div className="rounded-lg border bg-white p-6 text-sm text-gray-600">
-          Visitor Entry (landing pages) is not available yet. The backend has no landing-page endpoint.
-        </div>
-      )}
+      
     </div>
   );
 }
