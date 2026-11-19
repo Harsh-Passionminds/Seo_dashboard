@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { getGa4, getReportComparison } from "../../services/endpoints";
+import { getGa4, getReportComparison, getWebsites } from "../../services/endpoints";
 import { useWebsite, useDateRange } from "../../hooks/useAppContext";
 import { useSession } from "../../hooks/useSession";
 import QueryState from "../../components/ui/QueryState";
 import { toNum, fmtInt, downloadCsv } from "../../utils/format";
 import ComparisonGraph from "../../components/charts/ComparisonGraph";
+import { exportExcelReport } from "../../utils/excel-chart-export";
 
 const METRICS = {
   organic_sessions: { label: "Organic sessions", color: "#4285f4", axis: "left" },
@@ -52,6 +53,29 @@ export default function Ga4Page() {
   const [comparisonMetric, setComparisonMetric] = useState(COMPARISON_METRICS.ga4[0].key);
   const [comparisonMode, setComparisonMode] = useState("previous_period");
   const [customRange, setCustomRange] = useState({ startDate: "", endDate: "" });
+  const [exportingXlsx, setExportingXlsx] = useState(false);
+  const sites = useQuery({ queryKey: ["websites"], queryFn: getWebsites, enabled: !!websiteId });
+  const websiteName = sites.data?.websites?.find((w) => Number(w.website_id) === Number(websiteId))?.website_name || "Website";
+
+  const onExportXlsx = async () => {
+    setExportingXlsx(true);
+    try {
+      await exportExcelReport({
+        websiteId,
+        websiteName,
+        source: "ga4",
+        startDate: range.startDate,
+        endDate: range.endDate,
+        comparisonPeriod: comparisonQuery.data?.periods?.comparison,
+        comparisonMode,
+        reportResult: comparisonQuery.data || rows
+      });
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setExportingXlsx(false);
+    }
+  };
 
   const q = useQuery({ queryKey: ["ga4", "summary", websiteId, range], queryFn: () => getGa4(websiteId, range) });
 
@@ -169,9 +193,12 @@ export default function Ga4Page() {
         </p>
       </section>
 
-      {permissions.canExportReports && <div className="mt-4 flex justify-end">
+      {permissions.canExportReports && <div className="mt-4 flex justify-end gap-2">
         <button onClick={() => downloadCsv("ga4-summary.csv", rows)} className="rounded border px-3 py-1 text-sm">
           Export CSV
+        </button>
+        <button onClick={onExportXlsx} disabled={exportingXlsx} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+          {exportingXlsx ? "Exporting…" : "Export Excel"}
         </button>
       </div>}
       <table className="mt-2 w-full rounded-lg border bg-white text-sm">

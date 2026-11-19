@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { getGsc } from "../../services/endpoints";
+import { getGsc, getWebsites } from "../../services/endpoints";
 import MonthlyComparison from "./MonthlyComparison";
 import { useWebsite, useDateRange } from "../../hooks/useAppContext";
-import { toNum } from "../../utils/format";
+import { useSession } from "../../hooks/useSession";
+import { toNum, downloadCsv } from "../../utils/format";
+import { exportExcelReport } from "../../utils/excel-chart-export";
 
 const METRICS = {
   clicks:           { label: "Total clicks",      color: "#4285f4", bg: "bg-[#4285f4]" },
@@ -18,7 +20,30 @@ const n = (v) => toNum(v);
 export default function GscPage() {
   const { websiteId } = useWebsite();
   const { range } = useDateRange();
+  const { permissions } = useSession();
   const [active, setActive] = useState(["clicks", "impressions"]);
+  const [exportingXlsx, setExportingXlsx] = useState(false);
+
+  const sites = useQuery({ queryKey: ["websites"], queryFn: getWebsites, enabled: !!websiteId });
+  const websiteName = sites.data?.websites?.find((w) => Number(w.website_id) === Number(websiteId))?.website_name || "Website";
+
+  const onExportXlsx = async () => {
+    setExportingXlsx(true);
+    try {
+      await exportExcelReport({
+        websiteId,
+        websiteName,
+        source: "gsc",
+        startDate: range.startDate,
+        endDate: range.endDate,
+        reportResult: rows
+      });
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setExportingXlsx(false);
+    }
+  };
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["gsc", websiteId, range],
@@ -86,6 +111,17 @@ export default function GscPage() {
           </LineChart>
                 </ResponsiveContainer>
       </div>
+
+      {permissions.canExportReports && (
+        <div className="my-3 flex justify-end gap-2">
+          <button onClick={() => downloadCsv("gsc-performance.csv", rows)} className="rounded border px-3 py-1 text-sm">
+            Export CSV
+          </button>
+          <button onClick={onExportXlsx} disabled={exportingXlsx} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+            {exportingXlsx ? "Exporting…" : "Export Excel"}
+          </button>
+        </div>
+      )}
 
       <MonthlyComparison />
     </div>

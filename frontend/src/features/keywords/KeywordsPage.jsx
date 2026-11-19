@@ -8,6 +8,7 @@ import { useWebsite, useDateRange } from "../../hooks/useAppContext";
 import { useSession } from "../../hooks/useSession";
 import QueryState from "../../components/ui/QueryState";
 import { toNum, fmtInt, fmtPct, fmtPos, downloadCsv } from "../../utils/format";
+import { exportExcelReport } from "../../utils/excel-chart-export";
 
 const LIMIT = 25;
 const SORTABLE = [
@@ -38,9 +39,30 @@ export default function KeywordsPage() {
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState("keyword");
   const [order, setOrder] = useState("asc");
+  const [exportingXlsx, setExportingXlsx] = useState(false);
 
   const websites = useQuery({ queryKey: ["websites"], queryFn: getWebsites });
   const website = (websites.data?.websites ?? []).find((item) => Number(item.website_id) === Number(websiteId));
+
+  const onExportXlsx = async () => {
+    if (!selected) return;
+    setExportingXlsx(true);
+    try {
+      await exportExcelReport({
+        websiteId,
+        websiteName: website?.website_name || "Website",
+        source: "keyword_tracking",
+        startDate: range.startDate,
+        endDate: range.endDate,
+        filters: { keywordId: selected.keyword_id, keyword: selected.keyword },
+        reportResult: rows
+      });
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setExportingXlsx(false);
+    }
+  };
   const report = useQuery({
     queryKey: ["keyword-report", websiteId, range, search, sort, order, page],
     queryFn: () => getKeywordReport(websiteId, { ...range, search, sort, order, page, limit: LIMIT }),
@@ -206,7 +228,14 @@ export default function KeywordsPage() {
                 {isAdmin && <button onClick={() => sync.mutate()} disabled={sync.isPending} className="rounded border px-3 py-1 text-sm">
                   {sync.isPending ? "Syncing…" : "Fetch history for selected dates"}
                 </button>}
-                {permissions.canExportReports && <button onClick={() => downloadCsv(`${selected.keyword}.csv`, rows)} className="rounded border px-3 py-1 text-sm">Export CSV</button>}
+                {permissions.canExportReports && (
+                  <>
+                    <button onClick={() => downloadCsv(`${selected.keyword}.csv`, rows)} className="rounded border px-3 py-1 text-sm">Export CSV</button>
+                    <button onClick={onExportXlsx} disabled={exportingXlsx} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                      {exportingXlsx ? "Exporting…" : "Export Excel"}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             {sync.error && <p className="mb-2 text-sm text-red-700">{sync.error.message}</p>}

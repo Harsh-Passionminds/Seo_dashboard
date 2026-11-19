@@ -1,6 +1,4 @@
-import { api } from "./api";
-import { apiUrl } from "./api";
-import { download } from "./api";
+import { api, apiUrl, download, fetchDownload } from "./api.js";
 const qs = (o = {}) => {
   const p = new URLSearchParams();
   Object.entries(o).forEach(([k, v]) => {
@@ -61,3 +59,4 @@ export const disconnectGoogle = () => api("/auth/disconnect-google", { method: "
 
 export const getReportComparison = (id, params) => api(`/websites/${id}/reports/comparison?${qs(params)}`);
 export const exportReport = (id, params) => download(`/websites/${id}/reports/export?${qs(params)}`);
+export const fetchReportExport = (id, params) => fetchDownload(`/websites/${id}/reports/export?${qs(params)}`);

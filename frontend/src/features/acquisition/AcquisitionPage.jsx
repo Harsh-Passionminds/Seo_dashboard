@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line } from "recharts";
-import { getGa4 } from "../../services/endpoints";
+import { getGa4, getWebsites } from "../../services/endpoints";
 import { useWebsite, useDateRange } from "../../hooks/useAppContext";
 import { useSession } from "../../hooks/useSession";
 import QueryState from "../../components/ui/QueryState";
 import { toNum, fmtInt, fmtPct, downloadCsv } from "../../utils/format";
+import { exportExcelReport } from "../../utils/excel-chart-export";
 
 const TABS = ["User Acquisition", "Traffic Acquisition", "Visitor Entry"];
 
@@ -24,6 +25,29 @@ function Traffic({ dim }) {
   }));
   const total = q.data?.total;
 
+  const [exportingXlsx, setExportingXlsx] = useState(false);
+  const sites = useQuery({ queryKey: ["websites"], queryFn: getWebsites, enabled: !!websiteId });
+  const websiteName = sites.data?.websites?.find((w) => Number(w.website_id) === Number(websiteId))?.website_name || "Website";
+
+  const onExportXlsx = async () => {
+    setExportingXlsx(true);
+    try {
+      await exportExcelReport({
+        websiteId,
+        websiteName,
+        source: "traffic_acquisition",
+        startDate: range.startDate,
+        endDate: range.endDate,
+        filters: { dimensionType: dim },
+        reportResult: q.data?.rows ?? rows
+      });
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setExportingXlsx(false);
+    }
+  };
+
   return (
     <QueryState query={q} isEmpty={!rows.length}>
       <p className="mb-3 text-xs text-gray-500">Session-scoped dimensions (how sessions arrived), aggregated over the selected range.</p>
@@ -36,8 +60,11 @@ function Traffic({ dim }) {
           </BarChart>
         </ResponsiveContainer>
       </div>
-      {permissions.canExportReports && <div className="mt-3 flex justify-end">
+      {permissions.canExportReports && <div className="mt-3 flex justify-end gap-2">
         <button onClick={() => downloadCsv("traffic-acquisition.csv", rows)} className="rounded border px-3 py-1 text-sm">Export CSV</button>
+        <button onClick={onExportXlsx} disabled={exportingXlsx} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+          {exportingXlsx ? "Exporting…" : "Export Excel"}
+        </button>
       </div>}
       <table className="mt-2 w-full rounded-lg border bg-white text-sm">
         <thead className="bg-gray-50 text-left"><tr>
@@ -96,6 +123,29 @@ function User({ dim }) {
   const table = Object.values(byDim).sort((a, b) => b.totalUsers - a.totalUsers);
   const trend = Object.entries(byDate).map(([date, totalUsers]) => ({ date, totalUsers })).sort((a, b) => a.date.localeCompare(b.date));
 
+  const [exportingXlsx, setExportingXlsx] = useState(false);
+  const sites = useQuery({ queryKey: ["websites"], queryFn: getWebsites, enabled: !!websiteId });
+  const websiteName = sites.data?.websites?.find((w) => Number(w.website_id) === Number(websiteId))?.website_name || "Website";
+
+  const onExportXlsx = async () => {
+    setExportingXlsx(true);
+    try {
+      await exportExcelReport({
+        websiteId,
+        websiteName,
+        source: "user_acquisition",
+        startDate: range.startDate,
+        endDate: range.endDate,
+        filters: { dimensionType: dim },
+        reportResult: raw
+      });
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setExportingXlsx(false);
+    }
+  };
+
   return (
     <QueryState query={q} isEmpty={!raw.length}>
       <p className="mb-3 text-xs text-gray-500">
@@ -111,8 +161,11 @@ function User({ dim }) {
           </LineChart>
         </ResponsiveContainer>
       </div>
-      {permissions.canExportReports && <div className="mt-3 flex justify-end">
+      {permissions.canExportReports && <div className="mt-3 flex justify-end gap-2">
         <button onClick={() => downloadCsv("user-acquisition.csv", table)} className="rounded border px-3 py-1 text-sm">Export CSV</button>
+        <button onClick={onExportXlsx} disabled={exportingXlsx} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+          {exportingXlsx ? "Exporting…" : "Export Excel"}
+        </button>
       </div>}
       <table className="mt-2 w-full rounded-lg border bg-white text-sm">
         <thead className="bg-gray-50 text-left"><tr>

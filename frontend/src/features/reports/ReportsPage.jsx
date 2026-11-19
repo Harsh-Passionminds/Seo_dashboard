@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { exportReport, getReportComparison, getKeywordReport, getKeywords } from "../../services/endpoints";
+import { exportReport, getReportComparison, getKeywordReport, getKeywords, getWebsites } from "../../services/endpoints";
 import { useWebsite, useDateRange } from "../../hooks/useAppContext";
 import { useSession } from "../../hooks/useSession";
 import { toNum } from "../../utils/format";
 import ComparisonGraph from "../../components/charts/ComparisonGraph";
+import { exportExcelReport } from "../../utils/excel-chart-export";
 
 const SOURCES = [
   ["gsc", "Search Console"],
@@ -12,6 +13,7 @@ const SOURCES = [
   ["user_acquisition", "User Acquisition"],
   ["traffic_acquisition", "Traffic Acquisition"],
   ["keyword_tracking", "Keyword Tracking"],
+  ["landing_pages", "Landing Pages (Visitor Entry)"],
   ["combined", "Combined (GSC + GA4 + Keyword Tracking)"],
 ];
 const MODES = [
@@ -241,6 +243,13 @@ export default function ReportsPage() {
     enabled: !!websiteId && source === "combined"
   });
 
+  const sitesQuery = useQuery({
+    queryKey: ["websites"],
+    queryFn: getWebsites,
+    enabled: !!websiteId
+  });
+  const websiteName = sitesQuery.data?.websites?.find((w) => Number(w.website_id) === Number(websiteId))?.website_name || "Website";
+
   const filters = () => {
     const f = {};
     if (source === "user_acquisition" || source === "traffic_acquisition") f.dimensionType = dimType;
@@ -275,6 +284,7 @@ export default function ReportsPage() {
   });
 
   const onGenerate = () => {
+    if (source === "landing_pages") return setErr("Visitor Entry (landing pages) is not available: the database has no persisted landing-page table.");
     if (source === "keyword_tracking" && !keywordId) return setErr("Select a keyword.");
     if (mode === "custom" && (!cmp.startDate || !cmp.endDate)) return setErr("Pick both comparison dates.");
     setErr("");
@@ -296,14 +306,30 @@ export default function ReportsPage() {
   };
 
   const exportFile = async (format) => {
+    if (source === "landing_pages") return setErr("Visitor Entry (landing pages) is not available: the database has no persisted landing-page table.");
     setExporting(format);
     setErr("");
     try {
-      const p = { source, startDate: range.startDate, endDate: range.endDate, format };
-      if (picked.length && source !== "combined") p.metrics = picked.join(",");
-      const f = filters();
-      if (f) p.filters = f;
-      await exportReport(websiteId, p);
+      if (format === "xlsx") {
+        await exportExcelReport({
+          websiteId,
+          websiteName,
+          source,
+          startDate: range.startDate,
+          endDate: range.endDate,
+          comparisonPeriod: mode === "custom" ? cmp : null,
+          comparisonMode: mode,
+          filters: filters() ? JSON.parse(filters()) : {},
+          metrics: picked.length && source !== "combined" ? picked : [],
+          reportResult: res
+        });
+      } else {
+        const p = { source, startDate: range.startDate, endDate: range.endDate, format };
+        if (picked.length && source !== "combined") p.metrics = picked.join(",");
+        const f = filters();
+        if (f) p.filters = f;
+        await exportReport(websiteId, p);
+      }
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -409,6 +435,12 @@ export default function ReportsPage() {
         </div>
         {!permissions.canExportReports && <p className="mt-2 text-xs text-gray-500">Exports are not enabled for your account.</p>}
       </section>
+
+      {source === "landing_pages" && (
+        <div className="rounded-lg border bg-white p-6 text-sm text-gray-600">
+          Visitor Entry (landing pages) is not available: the database has no persisted landing-page table.
+        </div>
+      )}
 
       {res && source === "combined" && (
         <>
