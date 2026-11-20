@@ -9,6 +9,7 @@ import { ensureFreshnessForUser } from "../services/sync.service.js";
 import { adminService } from "../services/admin.service.js";
 import { createEmployeeAuthService } from "../services/employee-auth.service.js";
 import { canGoogleAuthenticateAsAdmin } from "../services/auth-policy.service.js";
+import { ensureBootstrapAdminMembership } from "../services/organization-bootstrap.service.js";
 import { requireOrganizationMembership, requireRole } from "../middleware/auth.js";
 import { HttpError } from "../utils/http-error.js";
 import { rateLimit } from "express-rate-limit";
@@ -126,6 +127,9 @@ authRouter.get("/google/callback", async (req, res, next) => {
       [profile.sub, profile.email, profile.name || null]
     );
     const userId = userResult.insertId;
+    if (bootstrapAdmin) {
+      await ensureBootstrapAdminMembership(pool, userId);
+    }
     await persistOAuthTokens(userId, profile, tokens);
 
     const [users] = await pool.execute(
